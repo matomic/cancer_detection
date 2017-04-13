@@ -1,0 +1,17 @@
+## how to use lung segmentation code,  for details, check img_mask_gen.py (which loops over all subsets, save lung(segmented)/nodule image pairs for Unet training)
+
+import tools
+
+#1. load the image case
+numpyImage, numpyOrigin, numpySpacing = tools.load_itk_image(img_file)
+
+#2. get Lung mask, lungMask=0 (outside of lung) / =1 (inside of lung)
+lungMask = tools.segment_lung_mask(numpyImage,speedup=2); #use speedup=2!
+
+#3. retrieve images at layer z (in my case, I also get the image for the nodule)
+# normalize it and hit with lungMask. (The output iamge is a 0-255 uint8 type
+image, for training, it is suggested to do img*1.0/255 as the input, may also
+subtract a mean value like 0.05). It is very important to normalized the
+image.
+img,mask = tools.get_img_mask(numpyImage, h, nodules, nth=-1, z=z);
+img = (img*lungMask[z]).astype(np.uint8)
