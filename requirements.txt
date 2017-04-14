@@ -1,0 +1,15 @@
+SimpleITK
+h5py
+keras
+matplotlib
+numpy
+opencv-python
+runcython
+scipy
+simplejson
+sklearn
+tensorflow-gpu
+trans
+
+ipdb
+pylint
