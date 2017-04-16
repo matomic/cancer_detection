@@ -4,11 +4,14 @@ keras
 matplotlib
 numpy
 opencv-python
+pandas
 runcython
+scikit-image
 scipy
 simplejson
 sklearn
 tensorflow-gpu
+tqdm
 trans
 
 ipdb
