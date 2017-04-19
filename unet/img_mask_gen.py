@@ -4,6 +4,7 @@ from __future__ import print_function, division
 
 # stdlib
 import os
+import collections
 from glob import glob
 
 # 3rd-party
@@ -17,9 +18,15 @@ from tqdm import tqdm
 import SimpleITK as sitk
 import numpy as np
 import pandas as pd
+import h5py
 
 # in-house
 import config as cfg
+
+# debugging
+from pprint import pprint
+from ipdb import set_trace
+
 
 def load_itk_image(filename):
     '''load mhd/raw {filename}'''
@@ -203,20 +210,20 @@ def segment_lung_mask(image, speedup=4):
 
         return res
 
-def processLunaSubset(subset, luna_subset_path, df_node, output_path):
-    '''Process LUNA2016 data {subset} at {luna_subset_path}, using annotation CSV file {df_node}
+def iterSubsetImagesAndMasks(subset, subset_path, df_node):
+    '''Preprocess LUNA2016 data {subset} at {subset_path}, using annotations CSV file {df_node}
+    Generate single HDF5 file.
     '''
     print("processing subset ",subset)
-    file_list = sorted(glob(os.path.join(luna_subset_path,"*.mhd")))
-    #print(file_list)
+    file_list = sorted(glob(os.path.join(subset_path,"*.mhd")))
 
     # Looping over the image files in the subset
     for img_file in tqdm(file_list):
         # <dir>/<suid>.mhd, <suid>=<orgid>.<hash>
+        # <dir>/<suid>.mhd, <suid>=<orgid>.<hash>
         suid = os.path.basename(img_file)[:-4]
         hashid = suid.split('.')[-1]
         sid_node = df_node[df_node["seriesuid"]==suid] #get all nodules associate with file
-
         #load images
         numpyImage, numpyOrigin, numpySpacing = load_itk_image(img_file)
         Nz, Nx, Ny = numpyImage.shape
@@ -249,20 +256,82 @@ def processLunaSubset(subset, luna_subset_path, df_node, output_path):
             img = (img*lungMask[z]).astype(np.uint8)
             mask = mask.astype(np.uint8)
 
-            np.save(os.path.join(output_path, "image_{}_{:03d}.npy".format(hashid, z)),img)
-            if np.any(mask):
-                np.save(os.path.join(output_path, "mask_{}_{:03d}.npy".format(hashid, z)), mask)
+            yield (suid, hashid), z, img, mask
+
+def h5group_append(group, ds, name=None):
+    '''Add dataset to group by name'''
+    name = name or '{:d}'.format(len(group))
+    if isinstance(ds, h5py.Dataset):
+        group[name] = ds
+    else:
+        ds = group.create_dataset(name, data=ds)
+    return ds
+
+def processLunaSubset(subset, subset_path, df_node, output_path, h5file=None):
+    '''Process LUNA2016 data {subset} at {luna_subset_path}, using annotation CSV file {df_node}'''
+    suid2z_set = collections.defaultdict(set)
+    for (suid, hashid), z, img, mask in iterSubsetImagesAndMasks(subset, subset_path, df_node):
+        img_path = os.path.join(output_path, "image_{}_{:03d}.npy".format(hashid, z))
+        msk_path = os.path.join(output_path, "mask_{}_{:03d}.npy".format(hashid, z))
+        haslabel = np.any(mask)
+        if h5file is not None:
+            # Store images and masks in HDF5 file with multiple names corresponding to the many ways we might want to address them
+            if z in suid2z_set[suid]:
+                print('seen z={} slice of {}'.format(z, suid))
+            else:
+                # Sequential by suid
+                attrs = { 'subset' : subset, 'suid' : suid, 'z' : z, 'haslabel' : haslabel }
+                suid_grp = h5file.require_group('by-suid').require_group(suid)
+                assert suid_grp.attrs.setdefault('subset', subset) == subset, 'suid {!r} in two different subsets: {!r} != {!r}'.format(suid, subset, suid_grp.attrs['subset'])
+                suid2z_set[suid].add(z) # seen slice before
+                img_grp = suid_grp.require_group('images')
+                img_ds = img_grp.create_dataset('{:d}'.format(len(img_grp)), data=img) # /by-suid/{suid}/images/{index}
+                img_ds.attrs.update(attrs)
+                img_ds.attrs['path'] = img_path
+                # Sequential by subset
+                subset_grp = h5file.require_group('by-subset').require_group(str(subset))
+                img_grp = subset_grp.require_group('images')
+                h5group_append(img_grp, img_ds) # /by-subset/{subset}/images/{index}
+                # Sequential by label
+                img_grp = h5file.require_group('by-label').require_group('labeled' if haslabel else 'unlabeled')
+                h5group_append(img_grp, img_ds) # /by-label/[labeled|unlabeled]/{index}
+                # Sequential by all
+                img_grp = h5file.require_group('images')
+                h5group_append(img_grp, img_ds) # /images/{index}
+            # process labels
+            if haslabel:
+                mask_grp = suid_grp.require_group('masks')
+                msk_ds = mask_grp.create_dataset('{:d}'.format(len(mask_grp)), data=mask) # /by-suid/{suid}/masks/{index}
+                # update attrs and cross reference image and mask
+                msk_ds.attrs.update(attrs)
+                img_ds.attrs['mask_name'] = msk_ds.name
+                msk_ds.attrs['image_name'] = img_ds.name
+                # Sequential by subset
+                mask_grp = subset_grp.require_group('masks')
+                h5group_append(mask_grp, msk_ds) # /by-subset/{subset}/masks/{index}
+                # Sequential by all
+                mask_grp = h5file.require_group('masks')
+                h5group_append(mask_grp, msk_ds) # /masks/{index}
+        else:
+            # Save to individual .npy files
+            np.save(img_path, img)
+            if haslabel:
+                np.save(msk_path, mask)
+    #set_trace()
 
 def main():
     '''conole script entry point'''
     df_node = pd.read_csv(os.path.join(cfg.csv_dir, "annotations.csv"))
+    h5file = os.path.join(cfg.root, 'img_mask', 'luna06.h5')
+    h5file = h5py.File(h5file, 'w')
     for subset in range(10):
         luna_subset_path = os.path.join(cfg.root, "data", "subset{}".format(subset))
         output_path = os.path.join(cfg.root,'img_mask', 'subset{}'.format(subset))
         if not os.path.isdir(output_path):
             os.makedirs(output_path)
-        processLunaSubset(subset, luna_subset_path, df_node, output_path)
-
+        processLunaSubset(subset, luna_subset_path, df_node, output_path, h5file=h5file)
+    # finally add labels list
+    h5file['labels'] = [ds.attrs['haslabel'] for ds in h5file['images'].values()]
 if __name__ == '__main__':
     main()
 
