@@ -1,0 +1,3 @@
+[submodule "lungAI"]
+	path = lungAI
+	url = git@github.com:woshialex/lungAI.git
