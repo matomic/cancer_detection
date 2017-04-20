@@ -19,15 +19,22 @@ def get_unet(img_rows, img_cols, version, **cfg_dict):
     def unet_conv(x_in, nf, rep=1):
         '''Generate a 2D convolution layer(s) for {x_in} with {nf} filters, repeating {rep} times'''
         # c in bind to local variable of `get_unet`
-        x_out = BN(axis=c)(Convolution2D(nf, (3, 3), padding='same', activation='relu')(x_in))
+        x_out = Convolution2D(nf, (3, 3), padding='same', activation='relu')(x_in)
+        x_out = BN(axis=c)(x_out)
         #x_out = LeakyReLU(0.1)(x_out)
         if rep>1:
             for _ in range(rep-1):
-                x_out = BN(axis=c)(Convolution2D(nf, (3, 3), padding='same', activation='relu')(x_out))
+                x_out = Convolution2D(nf, (3, 3), padding='same', activation='relu')(x_out)
+                x_out = BN(axis=c)(x_out)
                 #x_out = LeakyReLU(0.1)(x_out)
         return x_out
 
-    if version==1:
+    if version == 0:
+        # dummpy archietecture
+        n0 = 8
+        #net = unet_conv(inputs, n0, rep=1)
+        labels = Convolution2D(1, (3, 3), activation='sigmoid', padding='same', name='labels')(inputs)
+    elif version == 1:
         n0 = 8
         net = unet_conv(inputs, n0, rep=2)
         net = MaxPooling2D(pool_size=(2,2))(net)
@@ -47,7 +54,7 @@ def get_unet(img_rows, img_cols, version, **cfg_dict):
         net = UpSampling2D(size=(2,2))(net)
         net = unet_conv(net, n0, rep=1)
         labels = Convolution2D(1, (3, 3), activation='sigmoid', padding='same', name='labels')(net)
-    elif version==2:
+    elif version == 2:
         n0 = 8
         net = unet_conv(inputs, n0, rep=3)
         net = MaxPooling2D(pool_size=(2,2))(net)
@@ -66,39 +73,39 @@ def get_unet(img_rows, img_cols, version, **cfg_dict):
         net = unet_conv(net, n0, rep=1)
         labels = Convolution2D(1, (3, 3), activation='sigmoid', padding='same', name='labels')(net)
     elif version==3:
-        rep = cfg_dict['downsample_conv_repeat']
+        sub_rep = cfg_dict['subsampling_conv_repeat'] # number fo time conv2d/BN layers are repeated on the way down
+        sup_rep = cfg_dict['upsampling_conv_repeat']  # number of time conv2d/BN layers are repeated on the way up
         n0 = 8                                     #    (?, 512, 512, 1)
-        cov1 = unet_conv(inputs, n0, rep=rep)      # -> (?, 512, 512, 8)
+        cov1 = unet_conv(inputs, n0, rep=sub_rep)      # -> (?, 512, 512, 8)
         net = MaxPooling2D(pool_size=(2,2))(cov1)  # -> (?, 256, 256, 8)
-        cov2 = unet_conv(net, n0*2, rep=rep)       # -> (?, 256, 256, 16)
+        cov2 = unet_conv(net, n0*2, rep=sub_rep)       # -> (?, 256, 256, 16)
         net = MaxPooling2D(pool_size=(2,2))(cov2)  # -> (?, 128, 128, 16)
-        cov3 = unet_conv(net, n0*4, rep=rep)       # -> (?, 128, 128, 32)
+        cov3 = unet_conv(net, n0*4, rep=sub_rep)       # -> (?, 128, 128, 32)
         net = MaxPooling2D(pool_size=(2,2))(cov3)  # -> (?, 64, 64, 32)
-        cov4 = unet_conv(net, n0*8, rep=rep)       # -> (?, 64, 64, 64)
+        cov4 = unet_conv(net, n0*8, rep=sub_rep)       # -> (?, 64, 64, 64)
         net = MaxPooling2D(pool_size=(2,2))(cov4)  # -> (?, 32, 32, 64)
-        cov5 = unet_conv(net, n0*16, rep=rep)      # -> (?, 32, 32, 128)
-        rep = cfg_dict['upsample_conv_repeat']
+        cov5 = unet_conv(net, n0*16, rep=sub_rep)      # -> (?, 32, 32, 128)
         #5
         net = UpSampling2D(size=(2,2))(cov5)       # -> (?, 64, 64, 128)
-        net = unet_conv(net, n0*8, rep=rep)          # -> (?, 64, 64, 64)
+        net = unet_conv(net, n0*8, rep=sup_rep)          # -> (?, 64, 64, 64)
         net = UpSampling2D(size=(2,2))(net)        # -> (?, 128, 128, 64)
-        net = unet_conv(net, n0*4, rep=rep)          # -> (?, 128, 128, 32)
+        net = unet_conv(net, n0*4, rep=sup_rep)          # -> (?, 128, 128, 32)
         net = UpSampling2D(size=(2,2))(net)        # -> (?, 256, 256, 32)
-        net = unet_conv(net, n0*2, rep=rep)          # -> (?, 256, 256, 16)
+        net = unet_conv(net, n0*2, rep=sup_rep)          # -> (?, 256, 256, 16)
         net = UpSampling2D(size=(2,2))(net)        # -> (?, 512, 512, 16)
-        net5 = unet_conv(net, n0, rep=rep)           # -> (?, 512, 512, 8)
+        net5 = unet_conv(net, n0, rep=sup_rep)           # -> (?, 512, 512, 8)
         #4
         net = UpSampling2D(size=(2,2))(cov4)       # -> (?, 128, 128, 64)
-        net = unet_conv(net, n0*4, rep=rep)          # -> (?, 128, 128, 32)
+        net = unet_conv(net, n0*4, rep=sup_rep)          # -> (?, 128, 128, 32)
         net = UpSampling2D(size=(2,2))(net)        # -> (?, 256, 256, 32)
-        net = unet_conv(net, n0*2, rep=rep)          # -> (?, 256, 256, 16)
+        net = unet_conv(net, n0*2, rep=sup_rep)          # -> (?, 256, 256, 16)
         net = UpSampling2D(size=(2,2))(net)        # -> (?, 512, 512, 16)
-        net4 = unet_conv(net, n0, rep=rep)           # -> (?, 512, 512, 8)
+        net4 = unet_conv(net, n0, rep=sup_rep)           # -> (?, 512, 512, 8)
         #3
         net = UpSampling2D(size=(2,2))(cov3)       # -> (?, 256, 256, 32)
-        net = unet_conv(net, n0*2, rep=rep)          # -> (?, 256, 256, 16)
+        net = unet_conv(net, n0*2, rep=sup_rep)          # -> (?, 256, 256, 16)
         net = UpSampling2D(size=(2,2))(net)        # -> (?, 512, 512, 16)
-        net3 = unet_conv(net, n0, rep=rep)           # -> (?, 512, 512, 8)
+        net3 = unet_conv(net, n0, rep=sup_rep)           # -> (?, 512, 512, 8)
 
         net = concatenate([net5,net4,net3], axis=-1) # -> (?, 512, 512, 24)
         labels = Convolution2D(1, (1, 1), activation='sigmoid', padding='same', name='labels')(net) # -> (?, 512, 512, 1)

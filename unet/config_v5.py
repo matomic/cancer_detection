@@ -1,11 +1,13 @@
 '''Configuration file'''
 import os
+import inspect
+
 #score - 0.75
 tag = 5
 
 ## UNet architecture
 unet = {
-        'net_version' : 3,
+        'version' : 0,
         'downsample_conv_repeat' : 2, # number of repeat for each convolution layer during down sample
         'upsample_conv_repeat' : 1,   # number of repeats for each convolution layer during upsample
         }
@@ -21,9 +23,9 @@ params_dir = os.path.join(root, 'params')
 res_dir    = os.path.join(root, 'results')
 log_dir    = os.path.join(root, 'log')
 csv_dir    = os.path.join(root, 'CSVFILES')
-for d in [cache_dir,params_dir, res_dir, log_dir, csv_dir]:
-    if not os.path.isdir(d):
-        os.makedirs(d)
+for _d in [cache_dir,params_dir, res_dir, log_dir, csv_dir]:
+    if not os.path.isdir(_d):
+        os.makedirs(_d)
 
 ## -------------------------------------------------
 ## -----  fitter -------
@@ -40,7 +42,8 @@ fitter = {
 }
 
 #loss function paramters
-loss = {
+loss_func = 'dice_coef_loss_gen'
+loss_args = {
         'smooth'   : 5,
         'pred_mul' : 0.6,
         'p_ave'    : 0.8
@@ -49,11 +52,9 @@ loss = {
 ## -------------------------------------------------
 ## ----- model specification ----
 ## -------------------------------------------------
-inp = { # input dimension
-        'WIDTH'   : 512,
-        'HEIGHT'  : 512,
-        'CHANNEL' : 1
-        }
+WIDTH   = 512
+HEIGHT  = 512
+CHANNEL = 1
 
 ## -------------------------------------------------
 ## ----- image augmentation parameters ----
@@ -79,3 +80,12 @@ aug = {
 
 # test_aug = None
 use_augment = True
+
+def to_json():
+    '''Return a JSON-serializable map of this'''
+    return { k:v for k,v in globals().iteritems()
+            if not k.startswith('_')
+            and not inspect.ismodule(v)
+            and not inspect.isfunction(v)}
+
+# eof
