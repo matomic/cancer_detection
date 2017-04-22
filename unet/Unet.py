@@ -1,11 +1,11 @@
 '''---'''
-from keras.models import Model
-from keras.layers.convolutional import Conv2D as Convolution2D, UpSampling2D
-from keras.layers.pooling import MaxPooling2D
+from keras import backend as K
 from keras.layers import Input
+from keras.layers.convolutional import Conv2D as Convolution2D, UpSampling2D
 from keras.layers.merge import concatenate
 from keras.layers.normalization import BatchNormalization as BN
-from keras import backend as K
+from keras.layers.pooling import MaxPooling2D
+from keras.models import Model
 
 def get_unet(img_rows, img_cols, version, **cfg_dict):
     '''Generate {version} UNET model for image of size {img_rows}x{img_cols}'''

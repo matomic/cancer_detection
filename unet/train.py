@@ -1,7 +1,7 @@
 '''train'''
 from __future__ import print_function, division
 
-import collections
+import argparse
 import datetime
 import functools
 import os
@@ -14,24 +14,24 @@ import numpy as np
 #import pandas as pd
 #import tensorflow as tf
 
-#from keras import backend as K
-import keras.backend.tensorflow_backend as K
+from keras import backend as K
 from keras import callbacks
 from keras import optimizers as opt
+#from keras.backend import tensorflow_backend as K
 from keras.models import load_model
 #from keras.metrics import categorical_accuracy
 #from keras.objectives import categorical_crossentropy
 
 from Unet import get_unet
 from img_augmentation import ImageAugment
-from load_data import ImgStream
-import utils
-import config
+from load_data import ImgStream, TrainValidDataset
+from utils import dice_coef, hist_summary, safejsondump
 
+# debugging
 from pprint import pprint
-import ipdb
+from ipdb import set_trace
 
-def makeFittingCallbacks(chkpt_path):
+def fit_callbacks(chkpt_path):
     '''Return call back functions during fitting'''
     ## call backs
     model_checkpoint = callbacks.ModelCheckpoint(
