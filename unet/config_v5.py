@@ -7,9 +7,9 @@ tag = 5
 
 ## UNet architecture
 unet = {
-        'version' : 0,
-        'downsample_conv_repeat' : 2, # number of repeat for each convolution layer during down sample
-        'upsample_conv_repeat' : 1,   # number of repeats for each convolution layer during upsample
+        'version' : 3,
+        'subsampling_conv_repeat' : 2,
+        'upsampling_conv_repeat'  : 1,
         }
 
 ## -------------------------------------------------
