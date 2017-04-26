@@ -12,7 +12,7 @@ root="/home/qiliu/Share/Clinical/lung/luna16/"
 cache_dir = os.path.join(root, 'cache')
 params_dir = os.path.join(root, 'params')
 res_dir = os.path.join(root, 'results')
-log_dir = os.path.join(root, 'log');
+log_dir = os.path.join(root, 'log')
 for d in [cache_dir,params_dir, res_dir, log_dir]:
     if not os.path.isdir(d):
         os.makedirs(d)
@@ -21,7 +21,7 @@ for d in [cache_dir,params_dir, res_dir, log_dir]:
 ## -----  fitter -------
 ## -------------------------------------------------
 #sample
-unlabeled_ratio = 0.5;
+unlabeled_ratio = 0.5
 fitter = dict(
     batch_size = 8,
     num_epochs = 40,
@@ -29,11 +29,11 @@ fitter = dict(
     folds = [0], #fold == NCV means to use all data
     opt = 'Adam',
     opt_arg =dict(lr=1.0e-3),
-);
+)
 #loss function paramters
-smooth = 5;
-pred_loss_mul = 0.6;
-p_ave = 0.8;
+smooth = 5
+pred_loss_mul = 0.6
+p_ave = 0.8
 
 #fitter = dict(
 #    batch_size = 6,
@@ -42,15 +42,15 @@ p_ave = 0.8;
 #    folds = [0], #fold == NCV means to use all data
 #    opt = 'SGD',
 #    opt_arg =dict(lr=1.0e-2, momentum=0.90, decay=1.0e-6),
-#);
+#)
 
 ## -------------------------------------------------
 ## ----- model specification ----
 ## -------------------------------------------------
 #image size
-WIDTH=512;
-HEIGHT=512;
-CHANNEL=1;
+WIDTH=512
+HEIGHT=512
+CHANNEL=1
 
 ## -------------------------------------------------
 ## ----- image augmentation parameters ----
@@ -72,6 +72,6 @@ aug = dict(
 	 horizontal_flip=True,
 	 vertical_flip=False,
 	 rescale=None,
-);
+)
 
-test_aug = None;
+test_aug = None
