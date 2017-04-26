@@ -5,7 +5,7 @@ from __future__ import print_function, division
 # stdlib
 import os
 import collections
-from glob import glob
+import glob
 
 # 3rd-party
 #import SimpleITK as sitk
@@ -157,10 +157,9 @@ def segment_lung_mask(image, speedup=4):
         counts = counts[vals != bg]
         vals = vals[vals != bg]
 
-        if len(counts) > 0:
+        if bool(counts):
             return vals[np.argmax(counts)]
-        else:
-            return None
+        return None
     if speedup > 1:
         smallImage = transform.downscale_local_mean(image, (1, speedup, speedup))
     else:
@@ -196,26 +195,30 @@ def segment_lung_mask(image, speedup=4):
             binary_image[labels != l_max] = 0
             break
 
-    if speedup<=1:
+    if speedup <= 1:
         return binary_image
-    else:
-        res = np.zeros(image.shape,dtype=np.uint8)
-        for i, x in enumerate(binary_image):
-            orig = x.copy()
-            x = binary_dilation(x, disk(5))
-            x = binary_erosion(x, disk(5))
-            x |= orig.astype(bool)
-            y = transform.resize(x*1.0,image.shape[1:3])
-            res[i][y>0.5]=1
 
-        return res
+    res = np.zeros(image.shape,dtype=np.uint8)
+    for i, x in enumerate(binary_image):
+        orig = x.copy()
+        x = binary_dilation(x, disk(5))
+        x = binary_erosion(x, disk(5))
+        x |= orig.astype(bool)
+        y = transform.resize(x*1.0,image.shape[1:3])
+        res[i][y>0.5]=1
 
-def iterSubsetImagesAndMasks(subset, subset_path, df_node):
-    '''Preprocess LUNA2016 data {subset} at {subset_path}, using annotations CSV file {df_node}
-    Generate single HDF5 file.
+    return res
+
+NoduleCase = collections.namedtuple('_X_NTP', (
+    'suid', 'hashid', 'image', 'origin', 'spacing', 'nodules', 'lung_mask'
+    ))
+
+def iterLunaCases(subset, subset_path, df_node, use_existing_at=None):
+    '''iterate through file in {subset_path} for LUNA data {subset} with annotation {df_node}
+    If {use_existing_at} is present, generate by simply loading up existing npy file in it matching the hashid
     '''
     print("processing subset ",subset)
-    file_list = sorted(glob(os.path.join(subset_path,"*.mhd")))
+    file_list = sorted(glob.glob(os.path.join(subset_path,"*.mhd")))
 
     # Looping over the image files in the subset
     for img_file in tqdm(file_list):
@@ -226,37 +229,51 @@ def iterSubsetImagesAndMasks(subset, subset_path, df_node):
         sid_node = df_node[df_node["seriesuid"]==suid] #get all nodules associate with file
         #load images
         numpyImage, numpyOrigin, numpySpacing = load_itk_image(img_file)
-        Nz, Nx, Ny = numpyImage.shape
-        assert (Nx, Ny) == (512, 512)
-        assert numpySpacing[0]==numpySpacing[1], 'CT data not evenly space'
 
-        #load nodules infomation
-        nodules = []
-        for i in range(sid_node.shape[0]):
-            xyz_world = np.array([sid_node.coordX.values[i],sid_node.coordY.values[i],sid_node.coordZ.values[i]])
-            xyz       = worldToVoxelCoord(xyz_world, numpyOrigin, numpySpacing)
-            d_world   = sid_node.diameter_mm.values[i]
-            diameter  = d_world/numpySpacing[0]
-            xyzd      = tuple(np.append(xyz, diameter))
-            nodules.append(xyzd)
-        h = numpySpacing[2]/numpySpacing[0]
+        if use_existing_at:
+            assert os.path.isdir(use_existing_at)
+            raise NotImplementedError
+        else:
+            #load nodules infomation
+            nodules = []
+            for i in range(sid_node.shape[0]):
+                xyz_world = np.array([sid_node.coordX.values[i],sid_node.coordY.values[i],sid_node.coordZ.values[i]])
+                xyz       = worldToVoxelCoord(xyz_world, numpyOrigin, numpySpacing)
+                d_world   = sid_node.diameter_mm.values[i]
+                diameter  = d_world/numpySpacing[0]
+                xyzd      = tuple(np.append(xyz, diameter))
+                nodules.append(xyzd)
 
-        #Lung mask
-        lungMask = segment_lung_mask(numpyImage,speedup=2)
+            #Lung mask
+            lungMask = segment_lung_mask(numpyImage,speedup=2) # SLOW
+        yield NoduleCase(suid=suid, hashid=hashid,
+                image=numpyImage, origin=numpySpacing, spacing=numpySpacing,
+                nodules=nodules, lung_mask=lungMask)
+
+def iterSubsetImagesAndMasks(subset, subset_path, df_node):
+    '''Preprocess LUNA2016 data {subset} at {subset_path}, using annotations CSV file {df_node}
+    Generate single HDF5 file.
+    '''
+
+    for case in iterLunaCases(subset, subset_path, df_node):
+
+        h = case.spacing[2] / case.spacing[0]
 
         #save images (to save disk, only save every other image/mask pair, and the nodule location slices)
-        Nz, Nx, Ny = numpyImage.shape
+        Nz, Nx, Ny = case.image.shape
+        assert (Nx, Ny) == (512, 512)
+        assert case.spacing[0]==case.spacing[1], 'CT data not evenly space'
         zs = list(range(1, Nz, 2)) #odd slices
-        zs = sorted(zs + [int(x[2]) for x in nodules if x[2]%2==0])
+        zs = sorted(zs + [int(x[2]) for x in case.nodules if x[2]%2==0])
         minPixels = 0.02*Nx*Ny
         for z in zs:
-            if np.sum(lungMask[z])<minPixels:
+            if np.sum(case.lung_mask[z])<minPixels:
                 continue
-            img, mask = get_img_mask(numpyImage, h, nodules, nth=-1,z=z)
-            img = (img*lungMask[z]).astype(np.uint8)
+            img, mask = get_img_mask(case.image, h, case.nodules, nth=-1,z=z)
+            img = (img*case.lung_mask[z]).astype(np.uint8)
             mask = mask.astype(np.uint8)
 
-            yield (suid, hashid), z, img, mask
+            yield (case.suid, case.hashid), z, img, mask
 
 def h5group_append(group, ds, name=None):
     '''Add dataset to group by name'''
