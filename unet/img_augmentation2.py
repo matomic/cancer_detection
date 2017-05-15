@@ -113,7 +113,6 @@ def random_shear(x, intensity, row_axis=1, col_axis=2, channel_axis=0,
     x = apply_transform(x, transform_matrix, channel_axis, fill_mode, cval)
     return x
 
-
 def random_zoom(x, zoom_range, row_axis=1, col_axis=2, channel_axis=0,
                 fill_mode='nearest', cval=0.):
     """Performs a random spatial zoom of a Numpy image tensor.
@@ -153,7 +152,6 @@ def random_zoom(x, zoom_range, row_axis=1, col_axis=2, channel_axis=0,
     x = apply_transform(x, transform_matrix, channel_axis, fill_mode, cval)
     return x
 
-
 def random_channel_shift(x, intensity, channel_axis=0):
     x = np.rollaxis(x, channel_axis, 0)
     min_x, max_x = np.min(x), np.max(x)
@@ -163,7 +161,6 @@ def random_channel_shift(x, intensity, channel_axis=0):
     x = np.rollaxis(x, 0, channel_axis + 1)
     return x
 
-
 def transform_matrix_offset_center(matrix, x, y):
     o_x = float(x) / 2 + 0.5
     o_y = float(y) / 2 + 0.5
@@ -172,8 +169,8 @@ def transform_matrix_offset_center(matrix, x, y):
     transform_matrix = np.dot(np.dot(offset_matrix, matrix), reset_matrix)
     return transform_matrix
 
-
 def apply_transform(x, transform_matrix, channel_axis=0, fill_mode='nearest', cval=0.):
+    '''Apply {transform_matrix} to numpy image tensor {x}, whose {channel_axis}-th axis represents color channels.'''
     x = np.rollaxis(x, channel_axis, 0)
     final_affine_matrix = transform_matrix[:2, :2]
     final_offset = transform_matrix[:2, 2]
@@ -183,13 +180,11 @@ def apply_transform(x, transform_matrix, channel_axis=0, fill_mode='nearest', cv
     x = np.rollaxis(x, 0, channel_axis + 1)
     return x
 
-
 def flip_axis(x, axis):
     x = np.asarray(x).swapaxes(axis, 0)
     x = x[::-1, ...]
     x = x.swapaxes(0, axis)
     return x
-
 
 def array_to_img(x, dim_ordering='default', scale=True):
     """Converts a 3D Numpy array to a PIL Image instance.
@@ -274,7 +269,6 @@ def img_to_array(img, dim_ordering='default'):
         raise ValueError('Unsupported image shape: ', x.shape)
     return x
 
-
 def load_img(path, grayscale=False, target_size=None):
     """Loads an image into PIL format.
 
@@ -302,12 +296,10 @@ def load_img(path, grayscale=False, target_size=None):
         img = img.resize((target_size[1], target_size[0]))
     return img
 
-
 def list_pictures(directory, ext='jpg|jpeg|bmp|png'):
     return [os.path.join(root, f)
             for root, _, files in os.walk(directory) for f in files
             if re.match('([\w]+\.(?:' + ext + '))', f)]
-
 
 class ImageDataGenerator(object):
     """Generate minibatches of image data with real-time data augmentation.
@@ -611,14 +603,13 @@ class ImageDataGenerator(object):
             x /= (self.std + K.epsilon())
 
         if self.zca_whitening:
-            flat_x = np.reshape(x, (x.shape[0], x.shape[1] * x.shape[2] * x.shape[3]))
-            sigma = np.dot(flat_x.T, flat_x) / flat_x.shape[0]
+            flatx = np.reshape(x, (x.shape[0], x.shape[1] * x.shape[2] * x.shape[3]))
+            sigma = np.dot(flatx.T, flatx) / flatx.shape[0]
             u, s, _ = linalg.svd(sigma)
             self.principal_components = np.dot(np.dot(u, np.diag(1. / np.sqrt(s + 10e-7))), u.T)
 
 
 class Iterator(object):
-
     def __init__(self, n, batch_size, shuffle, seed):
         self.n = n
         self.batch_size = batch_size
@@ -661,9 +652,11 @@ class Iterator(object):
     def __next__(self, *args, **kwargs):
         return self.next(*args, **kwargs)
 
+    def next(self):
+        raise NotImplementedError
+
 
 class NumpyArrayIterator(Iterator):
-
     def __init__(self, x, y, image_data_generator,
                  batch_size=32, shuffle=False, seed=None,
                  dim_ordering='default',

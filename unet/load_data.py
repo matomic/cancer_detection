@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+''' (/^.^(^.^*)> '''
 from __future__ import division, print_function
 
 import collections
@@ -12,12 +14,10 @@ import numpy as np
 
 float32_t = np.float32
 
-import config as cfg
-
-from pprint import pprint
+#from pprint import pprint
 #from ipdb import set_trace
 
-def get_file_list(dataset='train'):
+def get_file_list(root_dir, dataset='train'):
     """
     for luna16 10 fold data set
     """
@@ -26,7 +26,7 @@ def get_file_list(dataset='train'):
         ls = []  # has label list (True/False)
         ids = [] # subset index list
         for s in range(10):
-            d = os.path.join(cfg.root,'img_mask','subset{}'.format(s))
+            d = os.path.join(root_dir,'img_mask','subset{}'.format(s))
             files = glob.glob(os.path.join(d,'image_*.npy'))
             labs = glob.glob(os.path.join(d,'mask_*.npy'))
             fs.extend(files)
@@ -41,6 +41,7 @@ def get_file_list(dataset='train'):
 TrainValidDataset = collections.namedtuple('_CVDS', ('train', 'validation', 'size'))
 
 class ImgStreamBase(object):
+    ''' (/｡>‿‿<｡(˶′◡‵˶)> '''
     def __init__(self):
         self.size = None
         self.batch_size = None
@@ -86,7 +87,7 @@ class ImgStreamBase(object):
         valid_gen = self._datagen(valid_idx, cycle=True, shuffle=False)
         if augmentTrain:
             train_gen = augmentTrain(train_gen)
-        return TrainValidDataset(train_gen, valid_gen, self.size)
+        return TrainValidDataset(train=train_gen, validation=valid_gen, size=self.size)
 
     def all_gen(self, cycle=True, shuffle=False, test=False):
         '''Return TrainValidDataset where all data are used for training
@@ -97,12 +98,12 @@ class ImgStreamBase(object):
 
 
 class ImgStream(ImgStreamBase):
-    def __init__(self, dataset, batch_size, unlabeled_ratio = 1.0):
+    def __init__(self, root_dir, dataset, batch_size, unlabeled_ratio = 1.0):
         self.batch_size = batch_size
         self.split_id = None
         self.unlabeled_ratio = unlabeled_ratio
         if dataset == 'train':
-            self.imgs, self.labels, self.split_id = get_file_list('train')
+            self.imgs, self.labels, self.split_id = get_file_list(root_dir, 'train')
             self.labels = np.asarray(self.labels, dtype=np.uint8)
             print('labels: {}'.format(set(self.labels)))
             self.split_id = np.asarray(self.split_id,dtype=np.int)

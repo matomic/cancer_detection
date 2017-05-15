@@ -1,12 +1,12 @@
+# -*- coding: utf-8 -*-
+'''[^._.^]ﾉ彡'''
 from __future__ import print_function
 from __future__ import division
 
-import argparse
 import os
 import pickle
 import sys
 
-import pandas as pd
 import numpy as np
 # from keras import backend as K
 from keras import callbacks
@@ -15,11 +15,19 @@ from keras import optimizers as opt
 from img_augmentation2 import ImageDataGenerator
 from models import get_3Dnet
 
+from console import PipelineApp
 
-def train(Xtrain, Ytrain, Xval, Yval, cfg, fold):
+# DEBUG
+from pprint import pprint
+from ipdb import set_trace
+
+
+npf32_t = np.float32 # pylint: disable=no-member
+
+def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
+    '''Train model with ({Xtrain}, {Ytrain}), with validation loss from ({Xval}, {Yval})'''
     #call backs
-    model_checkpoint = callbacks.ModelCheckpoint(
-            os.path.join(cfg.dirs.params_dir, 'm3D_{}_{}_fold{}.hdf5'.format(cfg.WIDTH, cfg.tag, fold)),
+    model_checkpoint = callbacks.ModelCheckpoint(checkpoint_path,
             monitor='val_loss', verbose=0,
             save_best_only=False
             )
@@ -39,56 +47,65 @@ def train(Xtrain, Ytrain, Xval, Yval, cfg, fold):
     datagenOne = ImageDataGenerator()
 
     #Fit here
-    history = model.fit_generator(datagen.flow(Xtrain,Ytrain,batch_size=cfg.fitter['batch_size']),
-            steps_per_epoch=len(Xtrain)//cfg.fitter['batch_size'],
-            epochs=cfg.fitter['num_epochs'],
-            validation_data = datagenOne.flow(Xval,Yval,batch_size=cfg.fitter['batch_size']),
-            validation_steps = len(Xval)//cfg.fitter['batch_size'],
-            callbacks = [learn_rate_decay, model_checkpoint, earlystop]
+    batch_size = cfg.fitter['batch_size']
+    train_flow = datagen.flow(Xtrain,  Ytrain, batch_size=batch_size)
+    valid_flow = datagenOne.flow(Xval, Yval,   batch_size=batch_size)
+    history = model.fit_generator(train_flow,
+            steps_per_epoch  = len(Xtrain) // batch_size,
+            epochs           = cfg.fitter['num_epochs'],
+            validation_data  = valid_flow,
+            validation_steps = len(Xval) // batch_size,
+            callbacks        = [learn_rate_decay, model_checkpoint, earlystop]
             )
     del model
 
-def main(sys_argv=None):
-    from console import parse_args
-    parsedArgs = parse_args(sys_argv)
+class TrainNoduleApp(PipelineApp):
+    def argparse_postparse(self, parsedArgs=None):
+        super(TrainNoduleApp, self).argparse_postparse(parsedArgs)
+        assert self.parsedArgs.session, 'unspecified unet training --session'
+        self.input_dir = os.path.join(self.result_dir, 'nodule_candidates')
+        # output_dir is self.checkpoint_path for this stage.
 
-    np.random.seed(123)
-    cfg = __import__(parsedArgs.config)
-    nods_dir = os.path.join(cfg.root, 'nodule_candidate_{}/'.format('_'.join(parsedArgs.tag)))
-    assert os.path.isdir(nods_dir), 'not a valid dir: {}'.format(nods_dir)
-    print("loading {} ...".format(nods_dir))
-    ids = os.listdir(nods_dir)
-    data = [pickle.load(open(os.path.join(nods_dir, i),'rb')) for i in ids]
-    Ncase = np.sum([len(x[0]) for x in data])
+    def getInputData(self):
+        '''Return input data list'''
+        np.random.seed(123) # pylint: disable=no-member
+        assert os.path.isdir(self.input_dir), 'not a valid dir: {}'.format(self.input_dir)
+        print("loading {} ...".format(self.input_dir))
+        ids   = os.listdir(self.input_dir)
+        data  = [pickle.load(open(os.path.join(self.input_dir, i),'rb')) for i in ids]
+        return data
 
-    Y = np.zeros(Ncase)
-    W = cfg.WIDTH
-    NC = cfg.CHANNEL
-    X = np.zeros((len(Y), W, W, NC), dtype=np.float32); #set to 0 for empty chanels
-    c = 0
-    for x in data:
-        nx = len(x[0])
-        if nx==0:
-            continue
-        imgs = x[0]
-        ls = x[1]
-        Y[c:c+nx] = ls
-        X[c:c+nx] = imgs
-        c += nx
+    checkpoint_path_fmrstr = '{net}_{WIDTH}_{tag}_fold{fold}.hdf5'
+    def _main_impl(self):
+        data  = self.getInputData()
+        Ncase = np.sum(len(imgs) for imgs, _ls in data)
 
-    print("total training cases ", Ncase)
-    print("percent Nodules: ",np.sum(Y)/Ncase)
+        Y  = np.zeros(Ncase)
+        W  = self.cfg.WIDTH
+        NC = self.cfg.CHANNEL
+        X  = np.zeros((len(Y), W, W, NC), dtype=npf32_t) #set to 0 for empty chanels
+        c  = 0
+        for imgs, lbls in data:
+            nx = len(imgs)
+            if nx == 0:
+                continue
+            Y[c:c+nx] = lbls
+            X[c:c+nx] = imgs
+            c += nx
+        print("total training cases ", Ncase)
+        print("percent Nodules: ",np.sum(Y)/Ncase)
 
-    # N fold cross validation
-    NF = cfg.fitter['NCV']
-    ii =  np.arange(Ncase)
-    for i in cfg.fitter['folds']:
-        ival = (ii%NF==i)
-        Xtrain= X[~ival]
-        Ytrain = Y[~ival]
-        Xval = X[ival]
-        Yval = Y[ival]
-        train(Xtrain,Ytrain,Xval,Yval, cfg, i)
+        # N fold cross validation
+        NF = self.cfg.fitter['NCV']
+        ii =  np.arange(Ncase)
+        for i in self.cfg.fitter['folds']:
+            ival   = ii % NF  == i
+            Xtrain = X[~ival]
+            Ytrain = Y[~ival]
+            Xval   = X[ival]
+            Yval   = Y[ival]
+            checkpoint_path = self.checkpoint_path('m3D', fold=i, WIDTH=self.cfg.WIDTH, tag=self.cfg.tag)
+            train(Xtrain, Ytrain, Xval, Yval, self.cfg, checkpoint_path=checkpoint_path)
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:] or None))
+    sys.exit(TrainNoduleApp().main() or 0)

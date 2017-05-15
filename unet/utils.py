@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+'''Utility functions'''
+from __future__ import print_function
+from __future__ import division
+
+import collections
 import functools
 import simplejson as json
 
@@ -11,8 +17,9 @@ from keras import backend as K
 
 
 def hist_summary(folds_history):
+    '''(つ・▽・)つ⊂(・▽・⊂)'''
     res = None
-    for i,h in folds_history.items():
+    for h in folds_history.itervalues():
         if res is None:
             val_names = [k for k in h.keys() if k.startswith('val_')]
             res = {n:[] for n in val_names}
@@ -26,26 +33,27 @@ def hist_summary(folds_history):
         res = res.append(res.mean,ignore_index=True)
     return res
 
-def clean_segmentation_img(img, cut=200):
-    seg_binary = np.zeros_like(img)
-    _,sb = cv2.threshold(np.copy(img)*255, 127, 255, cv2.THRESH_BINARY)
-    im = sb.astype(np.uint8)
-    contours = cv2.findContours(im, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    L = len(contours[1])
-    if L == 0:
-        return seg_binary
-    cnt_area = [cv2.contourArea(cnt) for cnt in contours[1]]
-
-    idx = np.argmax(cnt_area)
-    cnts = [contours[1][idx]]
-    area = cnt_area[idx]
-    if area<cut:
-        return seg_binary
-
-    cimg = np.zeros_like(im)
-    cv2.drawContours(cimg, cnts, 0, color=255, thickness=-1)
-    seg_binary[cimg == 255] = 1
-    return seg_binary
+#def clean_segmentation_img(img, cut=200):
+#    ''''''
+#    seg_binary = np.zeros_like(img)
+#    _,sb = cv2.threshold(np.copy(img)*255, 127, 255, cv2.THRESH_BINARY)
+#    im = sb.astype(np.uint8)
+#    contours = cv2.findContours(im, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+#    L = len(contours[1])
+#    if L == 0:
+#        return seg_binary
+#    cnt_area = [cv2.contourArea(cnt) for cnt in contours[1]]
+#
+#    idx = np.argmax(cnt_area)
+#    cnts = [contours[1][idx]]
+#    area = cnt_area[idx]
+#    if area<cut:
+#        return seg_binary
+#
+#    cimg = np.zeros_like(im)
+#    cv2.drawContours(cimg, cnts, 0, color=255, thickness=-1)
+#    seg_binary[cimg == 255] = 1
+#    return seg_binary
 
 def dice_coef(y_true, y_pred, smooth, pred_mul, p_ave, negate=False):
     '''Return the dice coefficent between {y_true} and {y_pred}
@@ -164,11 +172,22 @@ def get_json_type(obj):
     raise TypeError('Not JSON Serializable:', obj)
 
 jsondumps = functools.partial(json.dumps, indent=1, sort_keys=True, separators=(',',':'), default=get_json_type)
-jsondump = functools.partial(json.dump, indent=1, sort_keys=True, separators=(',',':'), default=get_json_type)
+jsondump = functools.partial (json.dump,  indent=1, sort_keys=True, separators=(',',':'), default=get_json_type)
 
 def safejsondump(j, f, *args, **kwds):
     '''Dump json serializable object {j} to file {f}, break on exception so that we don't end up have partially written file without review'''
+    j = numpy4json(j)
     jsondumps(j)
     jsondump(j, f, *args, **kwds)
+
+def numpy4json(j):
+    '''clean up object {j} for JSON serialization'''
+    if isinstance(j, collections.Mapping):
+        return { k : numpy4json(v) for k, v in j.iteritems() }
+    if isinstance(j, tuple(np.typeDict.itervalues())):
+        return j.tolist()
+    if isinstance(j, collections.Iterable):
+        return [numpy4json(v) for v in j]
+    return j
 
 # eof

@@ -1,7 +1,7 @@
 '''Configuration file'''
 import os
 
-from console import NetSpecs, DirsList
+from console import NetSpecs
 
 tag = 2
 #not working better
@@ -18,16 +18,14 @@ net = NetSpecs(
 root = os.environ.setdefault('LUNA_DIR', '/home/qiliu/Share/Clinical/lung/luna16/')
 
 #make these directories
-dirs = DirsList(
-        cache_dir  = os.path.join(root, 'cache'),
-        params_dir = os.path.join(root, 'params'),
-        res_dir    = os.path.join(root, 'results'),
-        log_dir    = os.path.join(root, 'log'),
-        csv_dir    = os.path.join(root, 'CSVFILES'),
-        )
-for _d in dirs:
-    if not os.path.isdir(_d):
-        os.makedirs(_d)
+dirs = {
+        'data_dir'   : os.path.join(root, 'data'),
+        'cache_dir'  : os.path.join(root, 'cache'),
+        'params_dir' : os.path.join(root, 'params'),
+        'res_dir'    : os.path.join(root, 'results'),
+        'log_dir'    : os.path.join(root, 'log'),
+        'csv_dir'    : os.path.join(root, 'CSVFILES'),
+        }
 
 ## -------------------------------------------------
 ## -----  fitter -------
