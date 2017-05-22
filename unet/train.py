@@ -31,8 +31,8 @@ from models import get_unet
 from utils import dice_coef, hist_summary, safejsondump
 
 # DEBUGGING
-#from pprint import pprint
-#from ipdb import set_trace
+from pprint import pprint
+from ipdb import set_trace
 
 def fit_callbacks(chkpt_path):
     '''Return call back functions during fitting'''
@@ -63,6 +63,7 @@ def model_factory(cfg, chkpt_path=None):
             # load loss function from accompanied configuration JSON
             cfg = json.load(open(chkpt_json,'r'))['config']
             loss_func = functools.partial(dice_coef, negate=True, **cfg['loss_args'])
+            loss_func.__name__ = 'dice_coef'
         else:
             print("Cannot find associated config JSON: {}".format(chkpt_json))
         model = load_model(chkpt_path, custom_objects={
@@ -77,6 +78,7 @@ def model_factory(cfg, chkpt_path=None):
                 loss = loss_func,
                 )
         print("model loaded from scratch")
+    set_trace()
     return model
 
 class UnetTrainer(PipelineApp):
@@ -98,7 +100,13 @@ class UnetTrainer(PipelineApp):
 
     def argparse_postparse(self, parsedArgs=None):
         super(UnetTrainer, self).argparse_postparse(parsedArgs)
-        self.full_train_data = ImgStream(self.cfg.root, "train", batch_size=self.cfg.fitter['batch_size'], unlabeled_ratio=self.cfg.unlabeled_ratio)
+        # Normally, img_mask_gen.py generates image/nodule mask pairs in self.cfg.root/img_mask, so that training data are reusable.  However,
+        # sometimes we might want to experiment with different preprocessing approaches.  So here we expect training data to come from the same place
+        # as where we will be saving the result.  To use "standard" training data, make a symbolic link from result_dir back to root dir.
+        img_mask_dir = os.path.join(self.result_dir, 'img_mask')
+        assert os.path.isdir(img_mask_dir), 'image/nodule mask pairs are expected in {}. It does not exist'.format(img_mask_dir)
+        self.full_train_data = ImgStream(self.result_dir, "train", batch_size=self.cfg.fitter['batch_size'], unlabeled_ratio=self.cfg.unlabeled_ratio)
+        set_trace()
 
     def _main_impl(self):
         if self.parsedArgs.debug:
@@ -176,7 +184,7 @@ class UnetTrainer(PipelineApp):
                     'config' : self.cfg.to_json(),
                     'model'  : model.get_config() # model architecture
                     }
-            safejsondump(train_json, open(mjson_path, 'w'))
+            safejsondump(train_json, mjson_path, 'w')
 #            set_trace()
 
             with K.tf.device('/gpu:0'):
@@ -188,7 +196,7 @@ class UnetTrainer(PipelineApp):
             #history has epoch and history atributes
             train_json['history'] = folds_history[fold] = history.history
             folds_best_epoch.append(np.argmin(history.history['val_loss']))
-            safejsondump(train_json, open(mjson_path, 'w'))
+            safejsondump(train_json, mjson_path)
             del model
 
         #save the full fitting history file for later study

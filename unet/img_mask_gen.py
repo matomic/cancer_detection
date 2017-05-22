@@ -26,33 +26,36 @@ import numpy as np
 from console import PipelineApp
 
 ## debugging
-#from pprint import pprint
-#from ipdb import set_trace
+from pprint import pprint
+try:
+    from ipdb import set_trace
+except Exception:
+    pass # jupyter notebook doesn't like reimporting ipdb
 
 
-def load_itk_image(filename):
-    '''load mhd/raw {filename}'''
-    itkimage = sitk.ReadImage(filename)
-    numpyImage = sitk.GetArrayFromImage(itkimage) # axis, sagittal, coronal
-
-    numpyOrigin = np.array(itkimage.GetOrigin()) #x,y,z
-    numpySpacing = np.array(itkimage.GetSpacing())
-
-    return numpyImage, numpyOrigin, numpySpacing
-
-def worldToVoxelCoord(worldCoord, origin, spacing):
-    '''
-    only valid if there is no rotation component
-    '''
-    voxelCoord = np.rint((worldCoord-origin)/spacing).astype(np.int) # pylint: disable=no-member
-    return voxelCoord
+#def load_itk_image(filename):
+#    '''load mhd/raw {filename}'''
+#    itkimage = sitk.ReadImage(filename)
+#    numpyImage = sitk.GetArrayFromImage(itkimage) # axis, sagittal, coronal
+#
+#    numpyOrigin = np.array(itkimage.GetOrigin()) #x,y,z
+#    numpySpacing = np.array(itkimage.GetSpacing())
+#
+#    return numpyImage, numpyOrigin, numpySpacing
+#
+#def worldToVoxelCoord(worldCoord, origin, spacing):
+#    '''
+#    only valid if there is no rotation component
+#    '''
+#    voxelCoord = np.rint((worldCoord-origin)/spacing).astype(np.int) # pylint: disable=no-member
+#    return voxelCoord
 
 def normalize(x):
     '''Normalize scan, mapping -1000 HU to 0 in gs and 200 HU to 255 gs'''
     y = np.interp(x, [-1000,200], [0, 255], left=0, right=255).astype(np.uint8)#0-255, to save disk space
     return y
 
-def get_img_mask(scan, h, nodules, nth=-1, z=None):
+def get_img_mask(scan, h, nodules, nth=-1, z=None, rho_min=3):
     """
     h = spacing_z/spacing_xy
     nodules = list (x,y,z,d) of the nodule, in Voxel space
@@ -68,15 +71,15 @@ def get_img_mask(scan, h, nodules, nth=-1, z=None):
     res = np.zeros(img.shape)
     #draw nodules
     for n_x, n_y, n_z, n_d in nodules:
-        r = n_d /2.0
+        r = n_d / 2.
         dz = np.abs((n_z-z)*h)
         if dz >= r:
             continue
-        rlayer = np.sqrt(r**2-dz**2)
-        if rlayer < 3:
+        rho = np.sqrt(r**2-dz**2) # on-slice radius rho
+        if rho < rho_min:
             continue
-        # create contour at xyzd[0],xyzd[1] with radius rlayer
-        rr, cc = draw.circle(n_y, n_x, rlayer)
+        # create contour at xyzd[0],xyzd[1] with radius rho
+        rr, cc = draw.circle(n_y, n_x, rho)
         res[rr, cc] = 1
     return img, res
 
@@ -211,6 +214,11 @@ def segment_lung_mask(image, speedup=4):
 
     return res
 
+def np_save(f, npy):
+    '''wrapper for saving {npy} array to {f}'''
+    print("saving {}".format(f))
+    np.save(f, npy)
+
 def get_lung_mask_npy(case, lmask_path, save_npy=True, lazy=False):
     '''Generate or load lung mask for {case}, if {save_npy}, save generated mask to disk'''
     if lazy and os.path.isfile(lmask_path):
@@ -225,25 +233,28 @@ def get_lung_mask_npy(case, lmask_path, save_npy=True, lazy=False):
 
 def get_img_mask_npy(case, lung_mask, z, img_path, mask_path, save_npy=True, lazy=False):
     '''Extract CT slice at index {z} from {case} with {lung_mask}. If {save_npy}, save generate image and mask to disk.'''
-    if lazy and os.path.isfile(img_path) and (mask_path is None or os.path.isfile(mask_path)):
+    z_is_in_nodule = case.isInNodule(z, min_pixel=3) # min_pixel matches rho_min argument below
+    if lazy and os.path.isfile(img_path) and (os.path.isfile(mask_path) or not z_is_in_nodule):
         img = np.load(img_path)
         #print("loaded {}".format(img_path))
-        if mask_path:
-            assert os.path.isfile(mask_path)
+        if os.path.isfile(mask_path):
             mask = np.load(mask_path)
         else:
+            assert not z_is_in_nodule
             mask = None
     else:
         #assert not save_npy
-        img, mask = get_img_mask(case.image, case.h, case.nodules, nth=-1,z=z) # SLOW!
-        img = (img*lung_mask[z]).astype(np.uint8)
+        img, mask = get_img_mask(case.image, case.h, case.nodules, nth=-1, z=z, rho_min=3) # SLOW!
+        img = (img*(1 if lung_mask is None else lung_mask[z])).astype(np.uint8)
         mask = mask.astype(np.uint8)
         if save_npy:
             np.save(img_path, img)
-            if mask_path:
-                np.save(mask_path, mask)
-            elif np.any(mask): # warning
+            if not mask_path: # issue warning on why mask is not generated; comment out if too verbose.
                 print("not saving mask for {}/{} due to null mask_path value.".format(case.hashid, z))
+            elif not np.any(mask):
+                print("not saving mask for {}/{} due to null mask array value.".format(case.hashid, z))
+            else:
+                np.save(mask_path, mask)
     return img, mask
 
 
@@ -291,17 +302,30 @@ class LunaCase(object):
     def readImageFile(self):
         '''read in image file and populate relevant attributes'''
         # load iamges
-        self.image, self.origin, self.spacing = load_itk_image(self.img_file)
-        self.h = self.spacing[2] / self.spacing[0]
+        itkimage = sitk.ReadImage(self.img_file)
+        self.image   = sitk.GetArrayFromImage(itkimage) # axis, sagittal, coronal
+        self.origin  = np.array(itkimage.GetOrigin()) #x,y,z
+        self.spacing = np.array(itkimage.GetSpacing())
+        self.h = self.spacing[2] / self.spacing[0] # ratio between slice spacing and pixel size
         #load nodules infomation
         self.nodules = []
         for i in range(self.sid_node.shape[0]):
             xyz_world = np.array([self.sid_node.coordX.values[i],self.sid_node.coordY.values[i],self.sid_node.coordZ.values[i]])
-            xyz       = worldToVoxelCoord(xyz_world, self.origin, self.spacing)
+            xyz_voxel = itkimage.TransformPhysicalPointToIndex(xyz_world),
+            #xyz_voxel = worldToVoxelCoord(xyz_world, self.origin, self.spacing),
             d_world   = self.sid_node.diameter_mm.values[i]
-            diameter  = d_world/self.spacing[0]
-            xyzd      = tuple(np.append(xyz, diameter))
+            d_voxel   = d_world/self.spacing[0]
+            xyzd      = tuple(np.append(xyz_voxel, d_voxel))
             self.nodules.append(xyzd)
+
+    def isInNodule(self, z, min_pixel=0):
+        '''True if slice {z} is in {nod}ule'''
+        for nod in self.nodules:
+            _x, _y, nz, nd = nod
+            rho2 = (nd/2)**2 - ((z-nz)*self.h)**2
+            if rho2>0 and np.sqrt(rho2) >= min_pixel:
+                return True
+        return False
 
 def h5group_append(group, ds, name=None):
     '''Add dataset to group by name'''
@@ -324,24 +348,31 @@ class LunaImageMaskApp(PipelineApp):
         parser = argparse.ArgumentParser(add_help=True,
                 description='Generate slice, label mask and lung mask npy files',
                 parents=[parser], conflict_handler='resolve')
+
+        parser.add_argument('--no-lung-mask', action='store_true',
+                help='If True, do not use lung segmentation.')
+
         parser.add_argument('--lazy', action='store_true',
                 help='If True, use slice image, nodule mask and lung mask npy files saved in the output directory by previous session.')
+
         return parser
 
     def argparse_postparse(self, parsedArgs=None):
         super(LunaImageMaskApp, self).argparse_postparse(parsedArgs)
         self.input_dir  = self.cfg.dirs.data_dir
-        self._reslt_dir = os.path.join(self.cfg.root, 'img_mask') # not saving to the usual result directory since these can be reused.
+        if parsedArgs.result_dir: # specified --result-dir
+            pass
+        elif parsedArgs.session:  # specified --session
+            self._reslt_dir = os.path.join(self._reslt_dir, 'img_mask')
+        else:
+            self._reslt_dir = os.path.join(self.cfg.root, 'img_mask') # not saving to the usual result directory since these can be reused.
+        set_trace()
 
         if self.parsedArgs.hdf5:
             h5file = os.path.join(self.result_dir, 'luna06.h5')
             print("Will be saving to HDF5 file {}".format(h5file))
             #assert False #DEBUG
             self.h5file = h5py.File(h5file, 'w')
-
-    def subset_input_dir(self, subset):
-        '''{subset} data input'''
-        return os.path.join(self.input_dir, 'subset{:d}'.format(subset))
 
     def subset_result_dir(self, subset):
         '''Auto-provisioned output directory for processing {subset}'''
@@ -353,47 +384,58 @@ class LunaImageMaskApp(PipelineApp):
         '''npy file path to save lung mask'''
         return os.path.join(self.subset_result_dir(subset), 'lungmask_{}.npy'.format(hashid))
 
-    def ct_slice_path(self, subset, hashid, z):
+    def ct_image_path(self, subset, hashid, z):
         '''npy file path to save numpy array for slice {z} of patient {hashid} from {subset}'''
         return os.path.join(self.subset_result_dir(subset), 'image_{}_{:03d}.npy'.format(hashid, z))
 
     def nod_mask_path(self, subset, hashid, z):
         '''npy file path to save numpy array for label mask'''
-        return os.path.join(self.subset_result_dir(subset), 'image_{}_{:03d}.npy'.format(hashid, z))
+        return os.path.join(self.subset_result_dir(subset), 'mask_{}_{:03d}.npy'.format(hashid, z))
 
     def processLunaSubset(self, subset, df_node):
         '''Process LUNA2016 data {subset}, using annotation CSV file {df_node}'''
-        for case in LunaCase.iterLunaCases(subset, self.subset_input_dir(subset), df_node):
+
+        for case in LunaCase.iterLunaCases(self.cfg.dirs.data_dir, subset, df_node):
+            case.readImageFile() # Load image file and populate case.image and other attributes
             Nz, Nx, Ny = case.image.shape
             assert (Nx, Ny) == (512, 512)
             assert case.spacing[0]==case.spacing[1], 'CT data not evenly space'
 
             #save images (to save disk, only save every other image/mask pair, and the nodule location slices)
             nodule_z = {int(x[2]) for x in case.nodules} # nodule slices
-            zs = [z for z in xrange(Nz) if z%2 or z in nodule_z] # keep odd slices and slices with nodule
             minPixels = 0.02*Nx*Ny
 
             # Save lung mask (used later in NoduleDetect.py
-            lmask_path = self.lung_mask_path(case.subset, case.hashid)
-            lung_mask = get_lung_mask_npy(case, lmask_path,
-                    save_npy=self.h5file is None,
-                    lazy=self.parsedArgs.lazy)
-            if self.h5file:
-                self.h5file.require_group('lung_masks').create_dataset(case.hashid, data=lung_mask)
-
-            #
-            for z in zs:
-                mask_sum = np.sum(lung_mask[z])
-                if mask_sum < minPixels and z not in nodule_z:
-                    continue
-                img_path = self.ct_slice_path(case.subset, case.hashid, z)
-                if z in nodule_z:
-                    msk_path = self.nod_mask_path(case.subset, case.hashid, z)
-                else:
-                    msk_path = None
-                img, mask = get_img_mask_npy(case, lung_mask, z, img_path, msk_path,
+            if self.parsedArgs.no_lung_mask:
+                lung_mask = None
+            else:
+                lmask_path = self.lung_mask_path(case.subset, case.hashid)
+                lung_mask = get_lung_mask_npy(case, lmask_path,
                         save_npy=self.h5file is None,
                         lazy=self.parsedArgs.lazy)
+                if self.h5file:
+                    self.h5file.require_group('lung_masks').create_dataset(case.hashid, data=lung_mask)
+            #
+            for z in xrange(Nz):
+                #z_is_in_nodule = any(LunaCase.isInNodule(z, nod) for nod in case.nodules)
+                is_nod_center = z in nodule_z # nodule is centered at z
+                if not (is_nod_center or z%2):
+                    continue # skip even slices without nodules to save space.
+                if lung_mask is not None:
+                    mask_sum = np.sum(lung_mask[z])
+                    if case.hashid=='144883090372691745980459537053':
+                        print("{} -> {}".format(mask_sum, mask_sum < minPixels))
+                    if mask_sum < minPixels and not is_nod_center:
+                        continue
+
+                img_path = self.ct_image_path(case.subset, case.hashid, z)
+                msk_path = self.nod_mask_path(case.subset, case.hashid, z)
+
+                img, mask = get_img_mask_npy(case, lung_mask, z,
+                        img_path  = img_path,
+                        mask_path = msk_path,
+                        save_npy  = self.h5file is None,
+                        lazy      = self.parsedArgs.lazy)
                 if self.h5file:
                     self.save_case_slice_to_h5file(case, z, img, haslabel=np.any(mask), mask=mask)
 

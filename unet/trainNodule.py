@@ -11,6 +11,7 @@ import numpy as np
 # from keras import backend as K
 from keras import callbacks
 from keras import optimizers as opt
+from keras.models import load_model
 
 from img_augmentation2 import ImageDataGenerator
 from models import get_3Dnet
@@ -24,9 +25,33 @@ from ipdb import set_trace
 
 npf32_t = np.float32 # pylint: disable=no-member
 
+def model_factory(cfg, chkpt_path):
+    '''Load model from {chkpt_path} or build fresh'''
+    if chkpt_path is not None and os.path.isfile(chkpt_path):
+        model = load_model(chkpt_path)
+        print("model loaded from checkpoint {}.".format(chkpt_path))
+    else:
+
+        ## build the neural net work
+        model = get_3Dnet(cfg.net.name, cfg.net.version, cfg.WIDTH, cfg.HEIGHT, cfg.CHANNEL)
+        model.compile(
+                optimizer = getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
+                loss = 'binary_crossentropy'
+                )
+        print("model loaded from scratch")
+    set_trace()
+    return model
+
 def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
     '''Train model with ({Xtrain}, {Ytrain}), with validation loss from ({Xval}, {Yval})'''
     #call backs
+    datagen = ImageDataGenerator(**cfg.aug)
+    datagenOne = ImageDataGenerator()
+
+    # load model
+    model = model_factory(cfg, checkpoint_path)
+
+    # setup callbacks
     model_checkpoint = callbacks.ModelCheckpoint(checkpoint_path,
             monitor='val_loss', verbose=0,
             save_best_only=False
@@ -36,15 +61,6 @@ def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
             patience=8, min_lr=1e-5, verbose=1
             )
     earlystop = callbacks.EarlyStopping(monitor='val_loss',patience=15,mode='min',verbose=1)
-
-    ## build the neural net work
-    model = get_3Dnet(cfg.net.name, cfg.net.version, cfg.WIDTH, cfg.HEIGHT, cfg.CHANNEL)
-    model.compile(
-            optimizer= getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
-            loss='binary_crossentropy'
-            )
-    datagen = ImageDataGenerator(**cfg.aug)
-    datagenOne = ImageDataGenerator()
 
     #Fit here
     batch_size = cfg.fitter['batch_size']
@@ -58,6 +74,7 @@ def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
             callbacks        = [learn_rate_decay, model_checkpoint, earlystop]
             )
     del model
+    return history
 
 class TrainNoduleApp(PipelineApp):
     def argparse_postparse(self, parsedArgs=None):
@@ -94,6 +111,7 @@ class TrainNoduleApp(PipelineApp):
             c += nx
         print("total training cases ", Ncase)
         print("percent Nodules: ",np.sum(Y)/Ncase)
+        set_trace()
 
         # N fold cross validation
         NF = self.cfg.fitter['NCV']

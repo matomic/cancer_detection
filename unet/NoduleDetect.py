@@ -3,7 +3,8 @@
 from __future__ import print_function, division
 
 # stdlib
-#import collections
+import argparse
+import collections
 import functools
 #import glob
 import itertools
@@ -22,12 +23,12 @@ import matplotlib.image as mplimage
 # in-house
 from console import PipelineApp
 from img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy
-from utils import dice_coef
+from utils import dice_coef, safejsondump
 from train import model_factory
 
 # DEBUGGING
-#from pprint import pprint
-#from ipdb import set_trace
+from pprint import pprint
+from ipdb import set_trace
 
 npf32_t = np.float32 # pylint: disable=no-member
 
@@ -50,11 +51,27 @@ class NoduleDetectApp(PipelineApp):
     def __init__(self):
         super(NoduleDetectApp, self).__init__()
         self.output_dir = self.missed_dir = None
+        self.statistics = None
+
+    def arg_parser(self):
+        parser = super(NoduleDetectApp, self).arg_parser()
+        parser = argparse.ArgumentParser(add_help=True,
+                description='Generate nodule candidates from trained Unet',
+                parents=[parser], conflict_handler='resolve')
+
+        parser.add_argument('--no-lung-mask', action='store_true',
+                help='If True, do not use lung segmentation.')
+
+        parser.add_argument('--lazy', action='store_true',
+                help='If True, use slice image, nodule mask and lung mask npy files saved in the output directory by previous session.')
+
+        return parser
 
     def argparse_postparse(self, parsedArgs=None):
         super(NoduleDetectApp, self).argparse_postparse(parsedArgs)
-        self.input_dir = os.path.join(self.cfg.root, 'img_mask')
+        self.input_dir = os.path.join(self.result_dir, 'img_mask')
         assert self.parsedArgs.session, 'unspecified unet training --session'
+        assert os.path.isdir(self.input_dir), 'data from needed directory not found: {}'.format(self.input_dir)
         self.output_dir = os.path.join(self.result_dir, 'nodule_candidates')
         self.missed_dir = os.path.join(self.result_dir, 'nodule_missed')
         self.provision_dirs(self.output_dir, self.missed_dir)
@@ -84,12 +101,11 @@ class NoduleDetectApp(PipelineApp):
     #    return model
 
     @staticmethod
-    def predict_nodules(case, models, lung_mask, cut=0.3):
+    def predict_nodules(case, models, lung_mask=None, cut=0.3):
         '''Load image from {case}, normalize HU to int8, then to unit interval for input to {models}
         Cumulatively infere {nodules}: values at each voxel counts the number of models whose inferred nodule probability is > {cut}
         '''
-
-        res = np.array(normalize(case.image)*lung_mask, dtype=npf32_t)*(1.0/255)-0.05
+        res = np.array(normalize(case.image)*(1 if lung_mask is None else lung_mask), dtype=npf32_t)*(1.0/255)-0.05
         res = np.expand_dims(res, axis=-1)
         nodules = models[0].predict(res,batch_size=8) > cut
         for model in models[1:]:
@@ -102,11 +118,24 @@ class NoduleDetectApp(PipelineApp):
         W, H = output_shape
         n = None
         for n, case in enumerate(nodule_case_gen):
-            lmask_path = self.lung_mask_path(case.subset, case.hashid)
-            lung_mask = get_lung_mask_npy(case, lmask_path, save_npy=False, lazy=True)
+            output_path = os.path.join(self.output_dir,'{}.pkl'.format(case.hashid))
+            if self.parsedArgs.lazy and os.path.isfile(output_path):
+                print('case {:03d}({}): skipped'.format(n, case.hashid))
+                continue
+            case.readImageFile()
+            if self.parsedArgs.no_lung_mask:
+                lung_mask = None
+            else:
+                lmask_path = self.lung_mask_path(case.subset, case.hashid)
+                assert os.path.isfile(lmask_path), 'lung mask file {} not found. Use --no-lung-mask?'.format(lmask_path)
+                lung_mask = get_lung_mask_npy(case, lmask_path, save_npy=False, lazy=True)
+
             ## Run inference from unet
             model_in, model_out = self.predict_nodules(case, models, lung_mask, cut=self.cfg.keep_prob)
-            nodules = model_out * (lung_mask > 0.2)
+            if lung_mask is None:
+                nodules = model_out.copy()
+            else:
+                nodules = model_out * (lung_mask > 0.2)
 
             ## find nodules and its central location
             binary_nodule = np.array(nodules>=0.5, dtype=np.int8)
@@ -117,7 +146,6 @@ class NoduleDetectApp(PipelineApp):
             candidate_list = sorted(itertools.izip(counts, vals), reverse=True)
 
             ## keep only larger than some threshold volume
-            h = case.spacing[2] / case.spacing[0]
             volume_threshold = 50
             nod_res =[]
             ls = [] # labels
@@ -152,7 +180,7 @@ class NoduleDetectApp(PipelineApp):
                 l = 0
                 for xyzd in case.nodules:
                     x_nod, y_nod, z_nod, d_nod = xyzd
-                    dz = np.abs(z_nod - cz)*h
+                    dz = np.abs(z_nod - cz) * case.h
                     dx = np.abs(x_nod - cx)
                     dy = np.abs(y_nod - cy)
                     if dx*dx+dy*dy+dz*dz <= d_nod**2/4:
@@ -181,10 +209,19 @@ class NoduleDetectApp(PipelineApp):
                     haslabel  = np.any(mask)
                     if not haslabel:
                         print('case {:03d}({}): z={} expected label.'.format(n, case.hashid, z_int))
+                    if mask is None:
+                        mask = np.zeros_like(img, dtype=bool)
                     mplimage.imsave(f, self.drawPrediction(img, mask, model_out[z_int,...]), vmin=0, vmax=255)
                     print('case {:03d}({}): nodule@(x{xyzd[0]:g},y{xyzd[1]:g},z{xyzd[2]:g},d{xyzd[3]:g}) missed -> {}'.format(n, case.hashid, f, xyzd=xyzd))
-#                    set_trace()
-            print('case {:03d}({}): {:d} nodules, {:2d} candidates, {:d} detected'.format(n, case.hashid, len(case.nodules), len(ls), Ndeteced))
+                    #set_trace()
+                    self.statistics['nodules_missed'] += 1
+            n_candids = len(ls)
+            n_nodules = len(case.nodules)
+            self.statistics['n_cases'] += 1
+            self.statistics['candidates'] += n_candids
+            self.statistics['nodules'] += n_nodules
+            self.statistics['nodules_detected'] += Ndeteced
+            print('case {:03d}({}): {:d} nodules, {:2d} candidates, {:d} detected'.format(n, case.hashid, n_nodules, n_candids, Ndeteced))
 
         return n # number of cases
 
@@ -203,6 +240,7 @@ class NoduleDetectApp(PipelineApp):
         ## output nodule image size
         W, H = 64, 16
 
+        self.statistics = collections.defaultdict(int)
         #assert len(sys.argv)==2
         #tags = sys.argv[1].split(',')
         #cfg = __import__('config_v{}'.format(tags[0])) # NOTE: need to handle multiple tag case?
@@ -215,12 +253,14 @@ class NoduleDetectApp(PipelineApp):
 
         df_node = LunaCase.readNodulesAnnotation(self.cfg.dirs.csv_dir)
 
-        for subset in range(10):
+        for subset in xrange(10):
+            if self.parsedArgs.subset and subset not in self.parsedArgs.subset:
+                continue
             print("processing subset ",subset)
-            subset_path = os.path.join(self.cfg.root, 'data', 'subset{}'.format(subset))
-
-            case_gen = LunaCase.iterLunaCases(subset, subset_path, df_node, use_tqdm=False)
+            case_gen = LunaCase.iterLunaCases(self.cfg.dirs.data_dir, subset, df_node, use_tqdm=False)
             self.luna_nodule_detect(case_gen, models, output_shape=(W, H))
+        set_trace()
+        safejsondump(self.statistics, os.path.join(self.result_dir, 'nodule_detection_stat.json'))
 
 if __name__ == '__main__':
     sys.exit(NoduleDetectApp().main() or 0)

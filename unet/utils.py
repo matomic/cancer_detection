@@ -178,16 +178,16 @@ def safejsondump(j, f, *args, **kwds):
     '''Dump json serializable object {j} to file {f}, break on exception so that we don't end up have partially written file without review'''
     j = numpy4json(j)
     jsondumps(j)
-    jsondump(j, f, *args, **kwds)
+    jsondump(j, open(f,'w'), *args, **kwds)
 
-def numpy4json(j):
+def numpy4json(j, seen_set=None):
     '''clean up object {j} for JSON serialization'''
     if isinstance(j, collections.Mapping):
         return { k : numpy4json(v) for k, v in j.iteritems() }
     if isinstance(j, tuple(np.typeDict.itervalues())):
         return j.tolist()
-    if isinstance(j, collections.Iterable):
-        return [numpy4json(v) for v in j]
+    #if isinstance(j, collections.Iterable):
+    #    return [numpy4json(v) for v in j]
     return j
 
 # eof
