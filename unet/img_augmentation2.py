@@ -610,6 +610,7 @@ class ImageDataGenerator(object):
 
 
 class Iterator(object):
+    '''Iterator that yields items from array of size {n} by {batch_size}'''
     def __init__(self, n, batch_size, shuffle, seed):
         self.n = n
         self.batch_size = batch_size
@@ -625,10 +626,10 @@ class Iterator(object):
     def _flow_index(self, n, batch_size=32, shuffle=False, seed=None):
         # ensure self.batch_index is 0
         self.reset()
-        while 1:
+        while True:
             if seed is not None:
                 np.random.seed(seed + self.total_batches_seen)
-            if self.batch_index == 0:
+            if self.batch_index == 0: # shuffle indeices
                 index_array = np.arange(n)
                 if shuffle:
                     index_array = np.random.permutation(n)
@@ -639,10 +640,9 @@ class Iterator(object):
                 self.batch_index += 1
             else:
                 current_batch_size = n - current_index
-                self.batch_index = 0
+                self.reset()
             self.total_batches_seen += 1
-            yield (index_array[current_index: current_index + current_batch_size],
-                   current_index, current_batch_size)
+            yield (index_array[current_index: current_index + current_batch_size], current_index, current_batch_size)
 
     def __iter__(self):
         # needed if we want to do something like:
@@ -703,18 +703,19 @@ class NumpyArrayIterator(Iterator):
         # The transformation of images is not under thread lock
         # so it can be done in parallel
         batch_x = np.zeros(tuple([current_batch_size] + list(self.x.shape)[1:]), dtype=K.floatx())
-        for i, j in enumerate(index_array):
-            x = self.x[j]
+        for i, index in enumerate(index_array):
+            x = self.x[index]
             x = self.image_data_generator.random_transform(x.astype(K.floatx()))
             x = self.image_data_generator.standardize(x)
             batch_x[i] = x
         if self.save_to_dir:
             for i in range(current_batch_size):
                 img = array_to_img(batch_x[i], self.dim_ordering, scale=True)
-                fname = '{prefix}_{index}_{hash}.{format}'.format(prefix=self.save_prefix,
-                                                                  index=current_index + i,
-                                                                  hash=np.random.randint(1e4),
-                                                                  format=self.save_format)
+                fname = '{prefix}_{index}_{hash}.{format}'.format(
+                        prefix = self.save_prefix,
+                        index  = current_index + i,
+                        hash   = np.random.randint(1e4),
+                        format = self.save_format)
                 img.save(os.path.join(self.save_to_dir, fname))
         if True:#to 3D
             #random shift in z direction

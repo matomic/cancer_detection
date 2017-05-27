@@ -190,4 +190,12 @@ def numpy4json(j, seen_set=None):
     #    return [numpy4json(v) for v in j]
     return j
 
+def config_json(config_dict):
+    '''Return a JSON-serializable structure of config'''
+    return {
+            k: v for k, v in config_dict.iteritems()
+            if not k.startswith('_')
+            and isinstance(v, (int, float, basestring, dict, list, tuple, set))
+            }
+
 # eof

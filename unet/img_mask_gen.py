@@ -32,7 +32,6 @@ try:
 except Exception:
     pass # jupyter notebook doesn't like reimporting ipdb
 
-
 #def load_itk_image(filename):
 #    '''load mhd/raw {filename}'''
 #    itkimage = sitk.ReadImage(filename)
@@ -50,9 +49,9 @@ except Exception:
 #    voxelCoord = np.rint((worldCoord-origin)/spacing).astype(np.int) # pylint: disable=no-member
 #    return voxelCoord
 
-def normalize(x):
+def normalize(x, vmin=-1000, vmax=200, left=0, right=255, dtype=np.uint8):
     '''Normalize scan, mapping -1000 HU to 0 in gs and 200 HU to 255 gs'''
-    y = np.interp(x, [-1000,200], [0, 255], left=0, right=255).astype(np.uint8)#0-255, to save disk space
+    y = np.interp(x, [vmin, vmax], [left, right], left=left, right=right).astype(dtype)#0-255, to save disk space
     return y
 
 def get_img_mask(scan, h, nodules, nth=-1, z=None, rho_min=3):
@@ -67,7 +66,7 @@ def get_img_mask(scan, h, nodules, nth=-1, z=None, rho_min=3):
     """
     if z is None:
         z = int(nodules[nth][2])
-    img = normalize(scan[z,:,:])
+    img = normalize(scan[z,...])
     res = np.zeros(img.shape)
     #draw nodules
     for n_x, n_y, n_z, n_d in nodules:
@@ -359,14 +358,14 @@ class LunaImageMaskApp(PipelineApp):
 
     def argparse_postparse(self, parsedArgs=None):
         super(LunaImageMaskApp, self).argparse_postparse(parsedArgs)
-        self.input_dir  = self.cfg.dirs.data_dir
+        self.input_dir = self.dirs.data_dir
         if parsedArgs.result_dir: # specified --result-dir
             pass
         elif parsedArgs.session:  # specified --session
             self._reslt_dir = os.path.join(self._reslt_dir, 'img_mask')
         else:
-            self._reslt_dir = os.path.join(self.cfg.root, 'img_mask') # not saving to the usual result directory since these can be reused.
-        set_trace()
+            self._reslt_dir = os.path.join(self.root, 'img_mask') # not saving to the usual result directory since these can be reused.
+        print("Generate output in: {}".format(self.result_dir))
 
         if self.parsedArgs.hdf5:
             h5file = os.path.join(self.result_dir, 'luna06.h5')
@@ -395,7 +394,7 @@ class LunaImageMaskApp(PipelineApp):
     def processLunaSubset(self, subset, df_node):
         '''Process LUNA2016 data {subset}, using annotation CSV file {df_node}'''
 
-        for case in LunaCase.iterLunaCases(self.cfg.dirs.data_dir, subset, df_node):
+        for case in LunaCase.iterLunaCases(self.dirs.data_dir, subset, df_node):
             case.readImageFile() # Load image file and populate case.image and other attributes
             Nz, Nx, Ny = case.image.shape
             assert (Nx, Ny) == (512, 512)
@@ -415,6 +414,7 @@ class LunaImageMaskApp(PipelineApp):
                         lazy=self.parsedArgs.lazy)
                 if self.h5file:
                     self.h5file.require_group('lung_masks').create_dataset(case.hashid, data=lung_mask)
+
             #
             for z in xrange(Nz):
                 #z_is_in_nodule = any(LunaCase.isInNodule(z, nod) for nod in case.nodules)
@@ -423,8 +423,6 @@ class LunaImageMaskApp(PipelineApp):
                     continue # skip even slices without nodules to save space.
                 if lung_mask is not None:
                     mask_sum = np.sum(lung_mask[z])
-                    if case.hashid=='144883090372691745980459537053':
-                        print("{} -> {}".format(mask_sum, mask_sum < minPixels))
                     if mask_sum < minPixels and not is_nod_center:
                         continue
 
@@ -485,7 +483,7 @@ class LunaImageMaskApp(PipelineApp):
 
     def _main_impl(self):
         '''conole script entry point'''
-        df_node = LunaCase.readNodulesAnnotation(self.cfg.dirs.csv_dir)
+        df_node = LunaCase.readNodulesAnnotation(self.dirs.csv_dir)
         for subset in xrange(10):
             if self.parsedArgs.subset and subset not in self.parsedArgs.subset:
                 continue

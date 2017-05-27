@@ -1,6 +1,4 @@
 '''Configuration file'''
-import os
-
 from console import NetSpecs
 
 #score - 0.75
@@ -14,21 +12,6 @@ unet = NetSpecs(
             'subsampling_conv_repeat' : 2,
             'upsampling_conv_repeat'  : 1,
             })
-
-## -------------------------------------------------
-## ---- data files ----
-## -------------------------------------------------
-root = os.environ.setdefault('LUNA_DIR', '/home/qiliu/Share/Clinical/lung/luna16/')
-
-#make these directories
-dirs = {
-        'data_dir'   : os.path.join(root, 'data'),
-        'cache_dir'  : os.path.join(root, 'cache'),
-        'params_dir' : os.path.join(root, 'params'),
-        'res_dir'    : os.path.join(root, 'results'),
-        'log_dir'    : os.path.join(root, 'log'),
-        'csv_dir'    : os.path.join(root, 'CSVFILES'),
-        }
 
 keep_prob=0.3
 ## -------------------------------------------------
@@ -84,21 +67,5 @@ aug = {
 
 # test_aug = None
 use_augment = True
-
-def to_json():
-    return {
-            k:v for k,v in globals().iteritems()
-            if not k.startswith('_')
-            and isinstance(v, (int, float, basestring, dict, list, tuple, set))
-            }
-def main():
-    '''write to JSON'''
-    from utils import safejsondump
-    config_js = os.path.splitext(__file__)[0] + '.json'
-    with open(config_js, 'w') as fp:
-        safejsondump(to_json(), fp)
-
-if __name__ == '__main__':
-    main()
 
 # eof

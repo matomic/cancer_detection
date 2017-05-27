@@ -15,6 +15,7 @@ DATA_ROOT = os.environ.setdefault('LUNA_DIR', '/home/qiliu/Share/Clinical/lung/l
 NetSpecs = collections.namedtuple('_NetSpecType', ('name', 'version', 'params'))
 DirsList = collections.namedtuple('_DTypes', ('data_dir', 'cache_dir', 'params_dir', 'res_dir', 'log_dir', 'csv_dir'))
 
+
 class PipelineApp(object):
     '''                         (つ・▽・)つ⊂(・▽・⊂)
     Console app wrapper, subclass generally represent a step in the training pipeline.
@@ -33,16 +34,23 @@ class PipelineApp(object):
     '''
     def __init__(self):
         self.parsedArgs = None
-        self.cfg = None
+        self.unet_cfg   = None # configuration data for unet
+        self.n3d_cfg    = None # configuration data for 3D nodule net
+
         # Generate each pipeline step involves using files from some input
         # directory and generating output in some other directory.
         self.input_dir = None
         self._reslt_dir = None
 
-    @property
-    def cfg_json(self):
-        '''JSONify self.cfg'''
-        return self.cfg.to_json()
+    root = os.environ.setdefault('LUNA_DIR', '/home/qiliu/Share/Clinical/lung/luna16/')
+    dirs = DirsList(
+            data_dir   = os.path.join(root, 'data'),
+            cache_dir  = os.path.join(root, 'cache'),
+            params_dir = os.path.join(root, 'params'),
+            res_dir    = os.path.join(root, 'results'),
+            log_dir    = os.path.join(root, 'log'),
+            csv_dir    = os.path.join(root, 'CSVFILES'),
+            )
 
     @property
     def result_dir(self):
@@ -67,8 +75,11 @@ class PipelineApp(object):
         '''Return list of ArgumentParser, of this class, and all the parents'''
         parser = argparse.ArgumentParser()
 
-        parser.add_argument('--config', action='store', default=None,
-                help='explicit config.py file to be imported, otherwise depends on tags. ')
+        parser.add_argument('--config-unet', action='store', default=None,
+                help='explicit config.py file to be imported, otherwise depends on tags.')
+
+        parser.add_argument('--config-n3d', action='store', default=None,
+                help='explicit config.py file to be imported for 3D net, otherwise depends on tags.')
 
         parser.add_argument('--subset', action='append', default=None, type=int,
                 help='when specified, limited script to data from single subset')
@@ -76,14 +87,15 @@ class PipelineApp(object):
         parser.add_argument('--hdf5', action='store_true', default=None,
                 help='Use HDF5 pipeline (preprocessed data are stored in HDF5 file, not complete).')
 
-        parser.add_argument('--session', action='store', default=None,
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument('--session', action='store', default=None,
                 help='session name')
 
-        parser.add_argument('--result-dir', action='store',
-                help='Overwrite default config.dirs.res_dir where results are stored')
+        group.add_argument('--result-dir', action='store',
+                help='Overwrite default dirs.res_dir where results are stored')
 
-        parser.add_argument('tags', type=str, action='append',
-                help='config tags')
+        #parser.add_argument('tags', type=str, action='append',
+        #        help='config tags')
 
         #parser.add_argument('--pretend', '-n', action='store_true',
         #        help='Do not write result to disk')
@@ -97,26 +109,21 @@ class PipelineApp(object):
 
         self.parsedArgs = parsedArgs
 
-    def _parsedArgs_config(self, parsedArgs=None):
-        '''Figure out which config file to import'''
-        if parsedArgs is None:
-            parsedArgs = self.parsedArgs
-
-        # Figure out parsedArgs.config
-        if parsedArgs.config is None:
-            parsedArgs.config = 'config_v{}'.format(parsedArgs.tags[0])
-        if not parsedArgs.config.startswith('config_'):
-            parsedArgs.config = 'config_' + parsedArgs.config
-        parsedArgs.config = os.path.splitext(parsedArgs.config)[0]
-
     def argparse_postparse(self, parsedArgs=None):
         '''Actions to perform after CLI arguments are parsed'''
         if parsedArgs is None:
             parsedArgs = self.parsedArgs
-        self._parsedArgs_config(parsedArgs)
-        self.cfg = __import__(parsedArgs.config)
-        self.cfg.dirs = DirsList(**self.cfg.dirs)
-        self._reslt_dir = parsedArgs.result_dir or self.cfg.dirs.res_dir
+        # Load value for self.unet_cfg
+        #self._parsedArgs_config(parsedArgs)
+        if parsedArgs.config_unet is not None:
+            if not parsedArgs.config_unet.startswith('config_'):
+                parsedArgs.config_unet = 'config_' + parsedArgs.config_unet # support both --config-unet config_v5 and --config-unet v5
+            self.unet_cfg = __import__(parsedArgs.config_unet)
+        if parsedArgs.config_n3d is not None:
+            if not parsedArgs.config_n3d.startswith('config_'):
+                parsedArgs.config_n3d = 'config_' + parsedArgs.config_n3d
+            self.n3d_cfg  = __import__(parsedArgs.config_n3d)
+        self._reslt_dir = parsedArgs.result_dir or self.dirs.res_dir
         if parsedArgs.session:
             self._reslt_dir = os.path.join(self._reslt_dir, parsedArgs.session)
 
@@ -126,6 +133,11 @@ class PipelineApp(object):
         for d in dirs:
             if not os.path.isdir(d):
                 os.makedirs(d)
+
+    @staticmethod
+    def subst_ext(path, ext):
+        '''substitute file {ext}ention of {path}'''
+        return os.path.splitext(path)[0] + '.' + ext.lstrip('.')
 
     def main(self, sys_argv=None):
         '''boilerplate main'''

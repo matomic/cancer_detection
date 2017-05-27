@@ -6,6 +6,8 @@ from __future__ import division
 import os
 import pickle
 import sys
+import time
+import datetime
 
 import numpy as np
 # from keras import backend as K
@@ -15,8 +17,8 @@ from keras.models import load_model
 
 from img_augmentation2 import ImageDataGenerator
 from models import get_3Dnet
-
 from console import PipelineApp
+from utils import safejsondump, config_json
 
 # DEBUG
 from pprint import pprint
@@ -25,31 +27,33 @@ from ipdb import set_trace
 
 npf32_t = np.float32 # pylint: disable=no-member
 
-def model_factory(cfg, chkpt_path):
-    '''Load model from {chkpt_path} or build fresh'''
-    if chkpt_path is not None and os.path.isfile(chkpt_path):
-        model = load_model(chkpt_path)
-        print("model loaded from checkpoint {}.".format(chkpt_path))
-    else:
+def n3dnet_from_checkpoint(chkpt_path):
+    '''Load nodule 3D network from checkpoint'''
+    model = load_model(chkpt_path)
+    print("model loaded from checkpoint {}.".format(chkpt_path))
+    return model
 
-        ## build the neural net work
-        model = get_3Dnet(cfg.net.name, cfg.net.version, cfg.WIDTH, cfg.HEIGHT, cfg.CHANNEL)
-        model.compile(
-                optimizer = getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
-                loss = 'binary_crossentropy'
-                )
-        print("model loaded from scratch")
-    set_trace()
+def n3dnet_from_scratch(cfg):
+    '''build the neural network that calculates nodule candidate probability'''
+    model = get_3Dnet(cfg.net.name, cfg.net.version, cfg.WIDTH, cfg.HEIGHT, cfg.CHANNEL)
+    model.compile(
+            optimizer = getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
+            loss = 'binary_crossentropy'
+            )
+    print("model loaded from scratch")
     return model
 
 def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
     '''Train model with ({Xtrain}, {Ytrain}), with validation loss from ({Xval}, {Yval})'''
     #call backs
-    datagen = ImageDataGenerator(**cfg.aug)
-    datagenOne = ImageDataGenerator()
+    datagen = ImageDataGenerator(**cfg.aug) # generateor with augmentation
+    datagenOne = ImageDataGenerator() # generator without augmentation
 
     # load model
-    model = model_factory(cfg, checkpoint_path)
+    if os.path.isfile(checkpoint_path):
+        model = n3dnet_from_checkpoint(checkpoint_path)
+    else:
+        model = n3dnet_from_scratch(cfg)
 
     # setup callbacks
     model_checkpoint = callbacks.ModelCheckpoint(checkpoint_path,
@@ -60,7 +64,7 @@ def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
             monitor='val_loss',factor=0.3,
             patience=8, min_lr=1e-5, verbose=1
             )
-    earlystop = callbacks.EarlyStopping(monitor='val_loss',patience=15,mode='min',verbose=1)
+    earlystop = callbacks.EarlyStopping(monitor='val_loss', patience=15, mode='min', verbose=1)
 
     #Fit here
     batch_size = cfg.fitter['batch_size']
@@ -76,10 +80,13 @@ def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
     del model
     return history
 
-class TrainNoduleApp(PipelineApp):
+
+class NoduleNetTrainer(PipelineApp):
+    '''Training app for nodule candidate network'''
     def argparse_postparse(self, parsedArgs=None):
-        super(TrainNoduleApp, self).argparse_postparse(parsedArgs)
+        super(NoduleNetTrainer, self).argparse_postparse(parsedArgs)
         assert self.parsedArgs.session, 'unspecified unet training --session'
+        assert self.n3d_cfg, 'must specify --config-n3d'
         self.input_dir = os.path.join(self.result_dir, 'nodule_candidates')
         # output_dir is self.checkpoint_path for this stage.
 
@@ -98,8 +105,8 @@ class TrainNoduleApp(PipelineApp):
         Ncase = np.sum(len(imgs) for imgs, _ls in data)
 
         Y  = np.zeros(Ncase)
-        W  = self.cfg.WIDTH
-        NC = self.cfg.CHANNEL
+        W  = self.n3d_cfg.WIDTH
+        NC = self.n3d_cfg.CHANNEL
         X  = np.zeros((len(Y), W, W, NC), dtype=npf32_t) #set to 0 for empty chanels
         c  = 0
         for imgs, lbls in data:
@@ -111,19 +118,27 @@ class TrainNoduleApp(PipelineApp):
             c += nx
         print("total training cases ", Ncase)
         print("percent Nodules: ",np.sum(Y)/Ncase)
-        set_trace()
 
         # N fold cross validation
-        NF = self.cfg.fitter['NCV']
+        NF = self.n3d_cfg.fitter['NCV']
         ii =  np.arange(Ncase)
-        for i in self.cfg.fitter['folds']:
+        for i in self.n3d_cfg.fitter['folds']:
             ival   = ii % NF  == i
             Xtrain = X[~ival]
             Ytrain = Y[~ival]
             Xval   = X[ival]
             Yval   = Y[ival]
-            checkpoint_path = self.checkpoint_path('m3D', fold=i, WIDTH=self.cfg.WIDTH, tag=self.cfg.tag)
-            train(Xtrain, Ytrain, Xval, Yval, self.cfg, checkpoint_path=checkpoint_path)
+            checkpoint_path = self.checkpoint_path('m3D', fold=i, WIDTH=W, tag=self.n3d_cfg.tag)
+            configjson_path = self.subst_ext(checkpoint_path, '.json')
+            history = train(Xtrain, Ytrain, Xval, Yval, self.n3d_cfg, checkpoint_path=checkpoint_path)
+            train_json = {
+                    '__id__'  : { 'name' : 'n3dNet', 'tag' : self.n3d_cfg.tag, 'fold' : i, 'ts': time.time(), 'dt' : datetime.datetime.now().isoformat() },
+                    'config'  : config_json(self.n3d_cfg.__dict__),
+                    'dirs'    : self.dirs,
+                    #'model'   : model.get_config(), # model architecture
+                    'history' : history.history,
+                    }
+            safejsondump(train_json, configjson_path)
 
 if __name__ == '__main__':
-    sys.exit(TrainNoduleApp().main() or 0)
+    sys.exit(NoduleNetTrainer().main() or 0)

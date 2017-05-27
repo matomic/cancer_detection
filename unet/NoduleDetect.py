@@ -22,9 +22,9 @@ import matplotlib.image as mplimage
 
 # in-house
 from console import PipelineApp
-from img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy
+from img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy, normalize
 from utils import dice_coef, safejsondump
-from train import model_factory
+from train import unet_from_checkpoint, UnetTrainer
 
 # DEBUGGING
 from pprint import pprint
@@ -40,9 +40,8 @@ def getmodel(tag, fold, cfg):
     model = load_model(model_path, custom_objects={'loss': loss_func})
     return model
 
-def normalize(x):
-    '''Normalize from HU to [0,255] uint8 scale'''
-    return np.interp(x, [-1000, 200], [0, 255], left=0, right=255).astype(np.uint8) # HU -_> [0, 255]
+NoduleCandidate = collections.namedtuple('_NC_xyz', ('volume_array', 'x', 'y', 'z', 'is_nodule'))
+
 
 class NoduleDetectApp(PipelineApp):
     '''
@@ -69,6 +68,9 @@ class NoduleDetectApp(PipelineApp):
 
     def argparse_postparse(self, parsedArgs=None):
         super(NoduleDetectApp, self).argparse_postparse(parsedArgs)
+        assert self.unet_cfg is not None, '--config-unet required.'
+        assert self.n3d_cfg is not None, '--config-n3d required.'
+
         self.input_dir = os.path.join(self.result_dir, 'img_mask')
         assert self.parsedArgs.session, 'unspecified unet training --session'
         assert os.path.isdir(self.input_dir), 'data from needed directory not found: {}'.format(self.input_dir)
@@ -101,27 +103,92 @@ class NoduleDetectApp(PipelineApp):
     #    return model
 
     @staticmethod
-    def predict_nodules(case, models, lung_mask=None, cut=0.3):
-        '''Load image from {case}, normalize HU to int8, then to unit interval for input to {models}
-        Cumulatively infere {nodules}: values at each voxel counts the number of models whose inferred nodule probability is > {cut}
+    def predict_nodules(case, models, lung_mask=None, cut=0.3, batch_size=8):
+        '''Load image from {case}, normalize HU to int8, then to unit interval with estimated mean offset for input to {models}
+        Cumulatively infere for nodule candidates: values at each voxel counts the number of models whose inferred nodule probability is > {cut}
         '''
-        res = np.array(normalize(case.image)*(1 if lung_mask is None else lung_mask), dtype=npf32_t)*(1.0/255)-0.05
+        res = normalize(case.image)
+        if lung_mask is not None:
+            res *= lung_mask
+        res = np.array(res, dtype=npf32_t)*(1.0/255) - 0.05
         res = np.expand_dims(res, axis=-1)
-        nodules = models[0].predict(res,batch_size=8) > cut
+        nodules = models[0].predict(res, batch_size=batch_size) > cut
         for model in models[1:]:
-            nodules += model.predict(res,batch_size=8) > cut
+            nodules += model.predict(res, batch_size=batch_size) > cut
         nodules = np.reshape(nodules, nodules.shape[:-1])
         return res, nodules
 
+    @staticmethod
+    def detect_nodule_candidate(model_in, model_out, output_shape, lung_mask=None, volume_threshold=50, training_case=None):
+        '''Generate list of nodules candidates and (if {training_case} is provided) set of matched nodules'''
+        if lung_mask is None:
+            nodules = model_out
+        else:
+            nodules = model_out * (lung_mask > 0.2)
+
+        ## find nodules and its central location
+        binary_nodule = np.array(nodules>=0.5, dtype=np.int8)
+        labels = measure.label(binary_nodule) # label connected region of binary_nodule
+        vals, counts = np.unique(labels, return_counts=True) # region label value and voxel count
+        counts = counts[vals!=0]
+        vals = vals[vals!=0]
+
+        candidate_list = []
+        detected_set = set()
+        W, H = output_shape
+
+        for count, val in sorted(itertools.izip(counts, vals), reverse=True):
+            ## Obvious candiate rejection
+            if count <= volume_threshold:
+                continue # ignore region whose voxel count is not larger than some threshold
+            xyz = np.where(labels == val)
+            cz, cy, cx = tuple(int(np.median(x)) for x in xyz)
+            #ss = tuple(int(np.max(x)-np.min(x))+1 for x in xyz)
+            #if ss[0]<3: #thickness<3 pixels
+            #    continue
+            # output result image with WIDTH
+            cx_min, cx_max = cx-W//2, cx+W//2
+            cy_min, cy_max = cy-W//2, cy+W//2
+            cz_min, cz_max = cz-H//2, cz+H//2
+
+            if cy_min<=0 or cy_max>512 or cx_min<=0 or cx_max>512 or cz_min<=0 or cz_max>=model_in.shape[0]:
+                continue # ignore region that is outside of CT volume
+
+            ## Slice input volume
+            #try:
+            out = np.transpose(model_in[cz_min:cz_max, cy_min:cy_max, cx_min:cx_max, 0]+0.05, (1,2,0)) # crop volumn, tranpose to y-x-z?
+            #except Exception:
+            #    continue
+            assert out.shape == (W,W,H), 'bad shape: {!r} != {!r}'.format(out.shape, (W,W,H))
+
+            ## Attach training label, 0 or 1, for whether this candidate is a known nodule. If training_case is None, label None.
+            if training_case is None:
+                l = None
+            else:
+                l = 0
+                for xyzd in training_case.nodules:
+                    x_nod, y_nod, z_nod, d_nod = xyzd
+                    dz = np.abs(z_nod - cz) * training_case.h
+                    dx = np.abs(x_nod - cx)
+                    dy = np.abs(y_nod - cy)
+                    if dx*dx+dy*dy+dz*dz <= d_nod**2/4:
+                        l=1
+                        if xyzd not in detected_set:
+                            detected_set.add(xyzd)
+                        else: # nodule detected in two disconnected regions
+                            print('case {}: nodule@(x{xyzd[0]:g},y{xyzd[1]:g},z{xyzd[2]:g},d{xyzd[3]:g}) detected again at (x{},y{},z{}).'.format(training_case.hashid, cx, cy, cz, xyzd=xyzd))
+                        break
+            candidate_list.append(NoduleCandidate(out, cx, cy, cz, l))
+        return candidate_list, detected_set
+
     def luna_nodule_detect(self, nodule_case_gen, models, output_shape):
         '''ʕ •̀ o •́ ʔ'''
-        W, H = output_shape
-        n = None
         for n, case in enumerate(nodule_case_gen):
             output_path = os.path.join(self.output_dir,'{}.pkl'.format(case.hashid))
             if self.parsedArgs.lazy and os.path.isfile(output_path):
                 print('case {:03d}({}): skipped'.format(n, case.hashid))
                 continue
+
             case.readImageFile()
             if self.parsedArgs.no_lung_mask:
                 lung_mask = None
@@ -131,75 +198,21 @@ class NoduleDetectApp(PipelineApp):
                 lung_mask = get_lung_mask_npy(case, lmask_path, save_npy=False, lazy=True)
 
             ## Run inference from unet
-            model_in, model_out = self.predict_nodules(case, models, lung_mask, cut=self.cfg.keep_prob)
-            if lung_mask is None:
-                nodules = model_out.copy()
-            else:
-                nodules = model_out * (lung_mask > 0.2)
+            model_in, model_out = self.predict_nodules(case, models, lung_mask, cut=self.unet_cfg.keep_prob)
 
-            ## find nodules and its central location
-            binary_nodule = np.array(nodules>=0.5, dtype=np.int8)
-            labels = measure.label(binary_nodule) # label connected region of binary_nodule
-            vals, counts = np.unique(labels, return_counts=True) # region label value and voxel count
-            counts = counts[vals!=0]
-            vals = vals[vals!=0]
-            candidate_list = sorted(itertools.izip(counts, vals), reverse=True)
+            ## List of nodule candidates
+            candidate_list, detected_set = self.detect_nodule_candidate(model_in, model_out, output_shape, lung_mask=lung_mask, training_case=case)
 
-            ## keep only larger than some threshold volume
-            volume_threshold = 50
-            nod_res =[]
-            ls = [] # labels
-            Ndeteced = 0
-            detected_set = set()
-            for count, val in candidate_list:
-                ## Obvious candiate rejection
-                if count <= volume_threshold:
-                    continue # ignore region whose voxel count is not larger than some threshold
-
-                xyz = np.where(labels == val)
-                cz, cy, cx = tuple(int(np.median(x)) for x in xyz)
-                #ss = tuple(int(np.max(x)-np.min(x))+1 for x in xyz)
-                #if ss[0]<3: #thickness<3 pixels
-                #    continue
-                # output result image with WIDTH
-                cx_min, cx_max = cx-W//2, cx+W//2
-                cy_min, cy_max = cy-W//2, cy+W//2
-                cz_min, cz_max = cz-H//2, cz+H//2
-
-                if cy_min<=0 or cy_max>512 or cx_min<=0 or cx_max>512 or cz_min<=0 or cz_max>=model_in.shape[0]:
-                    continue # ignore region that is outside of CT volume
-
-                ## Add kept candidates to nod_res/ls list
-                #try:
-                out = np.transpose(model_in[cz_min:cz_max, cy_min:cy_max, cx_min:cx_max, 0]+0.05, (1,2,0)) # crop volumn, tranpose to y-x-z?
-                #except Exception:
-                #    continue
-                assert out.shape == (W,W,H), 'bad shape: {!r} != {!r}'.format(out.shape, (W,W,H))
-
-                nod_res.append(out)
-                l = 0
-                for xyzd in case.nodules:
-                    x_nod, y_nod, z_nod, d_nod = xyzd
-                    dz = np.abs(z_nod - cz) * case.h
-                    dx = np.abs(x_nod - cx)
-                    dy = np.abs(y_nod - cy)
-                    if dx*dx+dy*dy+dz*dz <= d_nod**2/4:
-                        l=1
-                        if xyzd not in detected_set:
-                            Ndeteced += 1
-                            detected_set.add(xyzd)
-                        else: # nodule detected in two disconnected regions
-                            print('case {:03d}({}): nodule@(x{xyzd[0]:g},y{xyzd[1]:g},z{xyzd[2]:g},d{xyzd[3]:g}) detected again at (x{},y{},z{}).'.format(n, case.hashid, cx, cy, cz, xyzd=xyzd))
-                        break
-                ls.append(l)
-
-            # save
+            # save candidate list
             with open(os.path.join(self.output_dir,'{}.pkl'.format(case.hashid)), 'wb') as output:
-                pickle.dump([nod_res, ls], output)
+                pickle.dump(candidate_list, output)
 
             # save missed detection
             for xyzd in case.nodules:
-                if xyzd not in detected_set:
+                if xyzd in detected_set:
+                    #self.statistics['detected_nodule_list'].append(case.nodules)
+                    self.statistics['nodules_detected'] += 1
+                else:
                     assert np.all(np.round(xyzd[:3]) == xyzd[:3]), 'bad xyz: {}'.format(xyzd[:3])
                     z_int = int(xyzd[2])
                     f = os.path.join(self.missed_dir, '{}-{}.png'.format(case.hashid, z_int))
@@ -213,17 +226,17 @@ class NoduleDetectApp(PipelineApp):
                         mask = np.zeros_like(img, dtype=bool)
                     mplimage.imsave(f, self.drawPrediction(img, mask, model_out[z_int,...]), vmin=0, vmax=255)
                     print('case {:03d}({}): nodule@(x{xyzd[0]:g},y{xyzd[1]:g},z{xyzd[2]:g},d{xyzd[3]:g}) missed -> {}'.format(n, case.hashid, f, xyzd=xyzd))
-                    #set_trace()
+                    #self.statistics['missed_nodule_list'].append(case.nodules)
                     self.statistics['nodules_missed'] += 1
-            n_candids = len(ls)
-            n_nodules = len(case.nodules)
+            n_candids  = len(candidate_list)
+            n_nodules  = len(case.nodules)
+            n_detected = len(detected_set)
             self.statistics['n_cases'] += 1
             self.statistics['candidates'] += n_candids
             self.statistics['nodules'] += n_nodules
-            self.statistics['nodules_detected'] += Ndeteced
-            print('case {:03d}({}): {:d} nodules, {:2d} candidates, {:d} detected'.format(n, case.hashid, n_nodules, n_candids, Ndeteced))
-
-        return n # number of cases
+            if n_nodules > 0 and n_detected == 0: # failed to detect any nodule
+                self.statistics.setdefault('case_missed', []).append(case.suid)
+            print('case {:03d}({}): {:d} nodules, {:2d} candidates, {:d} detected'.format(n, case.hashid, n_nodules, n_candids, len(detected_set)))
 
     @staticmethod
     def drawPrediction(image, expected, predicted):
@@ -235,32 +248,35 @@ class NoduleDetectApp(PipelineApp):
         image[segmentation.find_boundaries(predicted)] = [vmax, vmin, vmin]
         return image
 
-    checkpoint_path_fmrstr = '{net}_{WIDTH}_{tag}_fold{fold}.hdf5'
+    checkpoint_path_fmrstr = UnetTrainer.checkpoint_path_fmrstr
     def _main_impl(self):
         ## output nodule image size
-        W, H = 64, 16
+        output_shape = (self.n3d_cfg.WIDTH, self.n3d_cfg.HEIGHT)
 
         self.statistics = collections.defaultdict(int)
+        #self.statistics['detected_nodule_list'] = []
+        #self.statistics['missed_nodule_list'] = []
+
         #assert len(sys.argv)==2
         #tags = sys.argv[1].split(',')
         #cfg = __import__('config_v{}'.format(tags[0])) # NOTE: need to handle multiple tag case?
         #models = [getmodel(int(t), 0, cfg) for t in tags]
 
-        checkpoint_path = self.checkpoint_path('unet', fold=0, WIDTH=self.cfg.WIDTH, tag=self.cfg.tag)
+        checkpoint_path = self.checkpoint_path('unet', fold=0, WIDTH=self.unet_cfg.WIDTH, tag=self.unet_cfg.tag)
         assert os.path.isfile(checkpoint_path), checkpoint_path
 
-        models = [model_factory(self.cfg, checkpoint_path)]
+        models = [unet_from_checkpoint(checkpoint_path, self.unet_cfg.loss_args)]
 
-        df_node = LunaCase.readNodulesAnnotation(self.cfg.dirs.csv_dir)
+        df_node = LunaCase.readNodulesAnnotation(self.dirs.csv_dir)
 
         for subset in xrange(10):
             if self.parsedArgs.subset and subset not in self.parsedArgs.subset:
                 continue
             print("processing subset ",subset)
-            case_gen = LunaCase.iterLunaCases(self.cfg.dirs.data_dir, subset, df_node, use_tqdm=False)
-            self.luna_nodule_detect(case_gen, models, output_shape=(W, H))
-        set_trace()
-        safejsondump(self.statistics, os.path.join(self.result_dir, 'nodule_detection_stat.json'))
+            case_gen = LunaCase.iterLunaCases(self.dirs.data_dir, subset, df_node, use_tqdm=False)
+            self.luna_nodule_detect(case_gen, models, output_shape=output_shape)
+        if not self.parsedArgs.lazy:
+            safejsondump(self.statistics, os.path.join(self.result_dir, 'nodule_detection_stat.json'))
 
 if __name__ == '__main__':
     sys.exit(NoduleDetectApp().main() or 0)
