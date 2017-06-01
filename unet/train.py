@@ -23,11 +23,11 @@ from keras.models import load_model
 #from keras.objectives import categorical_crossentropy
 
 # in-house
-from console import PipelineApp
-from img_augmentation import ImageAugment
-from load_data import ImgStream, TrainValidDataset
-from models import get_unet
-from utils import dice_coef, hist_summary, safejsondump
+from .console import PipelineApp
+from .img_augmentation import ImageAugment
+from .load_data import ImgStream, TrainValidDataset
+from .models import get_unet
+from .utils import dice_coef, hist_summary, safejsondump
 
 # DEBUGGING
 from pprint import pprint

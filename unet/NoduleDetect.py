@@ -21,10 +21,10 @@ import numpy as np
 import matplotlib.image as mplimage
 
 # in-house
-from console import PipelineApp
-from img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy, normalize
-from utils import dice_coef, safejsondump
-from train import unet_from_checkpoint, UnetTrainer
+from .console import PipelineApp
+from .img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy, normalize
+from .utils import dice_coef, safejsondump
+from .train import unet_from_checkpoint, UnetTrainer
 
 # DEBUGGING
 from pprint import pprint

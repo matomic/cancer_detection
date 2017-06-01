@@ -16,10 +16,10 @@ import SimpleITK as sitk
 from keras.backend import tensorflow_backend as K
 
 # in-house
-from NoduleDetect import NoduleDetectApp
-from console import PipelineApp
-from train import unet_from_checkpoint
-from trainNodule import n3dnet_from_checkpoint
+from .NoduleDetect import NoduleDetectApp
+from .console import PipelineApp
+from .train import unet_from_checkpoint
+from .trainNodule import n3dnet_from_checkpoint
 
 from pprint  import pprint
 from ipdb import set_trace

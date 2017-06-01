@@ -15,10 +15,10 @@ from keras import callbacks
 from keras import optimizers as opt
 from keras.models import load_model
 
-from img_augmentation2 import ImageDataGenerator
-from models import get_3Dnet
-from console import PipelineApp
-from utils import safejsondump, config_json
+from .img_augmentation2 import ImageDataGenerator
+from .models import get_3Dnet
+from .console import PipelineApp
+from .utils import safejsondump, config_json
 
 # DEBUG
 from pprint import pprint

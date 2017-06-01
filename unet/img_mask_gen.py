@@ -23,7 +23,7 @@ import h5py
 import numpy as np
 
 # in-house
-from console import PipelineApp
+from .console import PipelineApp
 
 ## debugging
 from pprint import pprint
