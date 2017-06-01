@@ -40,7 +40,7 @@ def getmodel(tag, fold, cfg):
     model = load_model(model_path, custom_objects={'loss': loss_func})
     return model
 
-NoduleCandidate = collections.namedtuple('_NC_xyz', ('volume_array', 'x', 'y', 'z', 'is_nodule'))
+NoduleCandidate = collections.namedtuple('_NC_xyz', ('volume_array', 'x', 'y', 'z', 'd', 'is_nodule'))
 
 
 class NoduleDetectApp(PipelineApp):
@@ -137,7 +137,7 @@ class NoduleDetectApp(PipelineApp):
         detected_set = set()
         W, H = output_shape
 
-        for count, val in sorted(itertools.izip(counts, vals), reverse=True):
+        for count, val in sorted(zip(counts, vals), reverse=True):
             ## Obvious candiate rejection
             if count <= volume_threshold:
                 continue # ignore region whose voxel count is not larger than some threshold
@@ -163,22 +163,23 @@ class NoduleDetectApp(PipelineApp):
 
             ## Attach training label, 0 or 1, for whether this candidate is a known nodule. If training_case is None, label None.
             if training_case is None:
-                l = None
+                candidate = NoduleCandidate(out, cx, cy, cz, 0, None) # FIXME
             else:
-                l = 0
+                isNodule = False
                 for xyzd in training_case.nodules:
                     x_nod, y_nod, z_nod, d_nod = xyzd
                     dz = np.abs(z_nod - cz) * training_case.h
                     dx = np.abs(x_nod - cx)
                     dy = np.abs(y_nod - cy)
                     if dx*dx+dy*dy+dz*dz <= d_nod**2/4:
-                        l=1
+                        isNodule = True
                         if xyzd not in detected_set:
                             detected_set.add(xyzd)
                         else: # nodule detected in two disconnected regions
                             print('case {}: nodule@(x{xyzd[0]:g},y{xyzd[1]:g},z{xyzd[2]:g},d{xyzd[3]:g}) detected again at (x{},y{},z{}).'.format(training_case.hashid, cx, cy, cz, xyzd=xyzd))
                         break
-            candidate_list.append(NoduleCandidate(out, cx, cy, cz, l))
+                candidate = NoduleCandidate(out, cx, cy, cz, 0, isNodule)
+            candidate_list.append(candidate)
         return candidate_list, detected_set
 
     def luna_nodule_detect(self, nodule_case_gen, models, output_shape):

@@ -1,0 +1,23 @@
+<html
+	xmlns="http://www.w3.org/1999/xhtml"
+	xmlns:xi="http://www.w3.org/2001/XInclude"
+	xmlns:py="http://genshi.edgewall.org/"
+	lang="en"
+	py:strip="True"
+	>
+	<py:match path="head" once="true">
+	<head py:attrs="select('@*')">
+		<meta charset="utf-8" />
+	</head>
+	</py:match>
+	<py:match path="title" once="true">
+	<title py:attrs="select('@*')">
+		NOTHING FANCY
+	</title>
+	</py:match>
+	<py:match path="body" once="true">
+	<body py:attrs="select('@*')">
+		<p>ABCDE</p>
+	</body>
+	</py:match>
+</html>

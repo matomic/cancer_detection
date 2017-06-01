@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html
+	xmlns="http://www.w3.org/1999/xhtml"
+	lang="en"
+	>
+	<head>
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<!--
+		<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+		-->
+		<link rel="stylesheet" href="{{ url_for('static', filename='css/font-awesome-4.7.0/css/font-awesome.min.css') }}" />
+		<script type="text/javascript">//<![CDATA[
+			if (typeof console === "undefined" || typeof console.log === "undefined") {
+				console = {
+					log : function() {},
+					dir : function() {},
+					error : function() {}
+				};
+			}
+			//]]>
+		</script>
+		<script src="https://code.jquery.com/jquery-3.2.0.min.js"></script>
+		<!--
+		<script src="https://cdn.plot.ly/plotly-1.2.0.min.js"></script>
+		<script src="{{ url_for('static', filename='jquery/jquery-3.2.0.min.js') }}"></script>
+		<script src="{{ url_for('static', filename='plot.ly/plotly-latest.min.js') }}"></script>
+		-->
+		<script src="{{ url_for('static', filename='app/sliceviewer.js') }}"></script>
+		<!--<script src="https://cdn.plot.ly/plotly-1.2.0.min.js"></script>-->
+		<script type="text/javascript">//<![CDATA[
+			$(function() {
+				window.sliceviewer = new SliceViewer({
+					suid2urls : {{ suid2urls_dic | tojson | safe }},
+					container : $('.canvas-container'),
+					ui_prev  : $("a#prev"),
+					ui_next  : $("a#next"),
+					ui_index : $("#index_disp"),
+					ui_x_profile : null,//$("#horizontal-profile")
+					ui_y_profile : null//$("#vertical-profile")
+				});
+			});
+			//]]>
+		</script>
+		<style type="text/css">
+			.canvas-container {
+				margin-left : 35px;
+				margin-top : 12px;
+				min-width  : 512px;
+				width : 50%;
+				height : 512px;
+				display : inline-block;
+				*display: inline;
+				vertical-align : top;
+			}
+			/*
+			#horizontal-profile {
+				width : 522px;
+				top : 552px;
+				position : absolute;
+			}
+			#vertical-profile {
+				-webkit-transform: rotate(90deg);
+				-webkit-transform-orgin-x: 0px;
+				-webkit-transform-orgin-y: 0px;
+				/*width : 532px;*/
+			/*
+				left : 450px;
+				top  : 160px;
+				position : absolute;
+			}
+			*/
+			#prediction {
+				min-width : 200px;
+				width : 20%;
+				display : inline-block;
+				*display: inline;
+				vertical-align : top;
+			}
+			table#candidate {
+				width           : 100%;
+				border          : 2px solid;
+				border-collapse : collapse;
+			}
+			table#candidate tr, table#candidate th, table#candidate td {
+				border-bottom   : 2px solid;
+				border-top      : 2px solid;
+				border-collapse : collapse;
+				text-align      : center;
+			}
+			#prediction-spinner {
+				font-size: 24px;
+				color: red;
+			}
+		</style>
+		<title>DICOM Slice Viewer </title>
+	</head>
+	<body>
+		<div id="nav_container">
+			<div>
+				<select id='suid'>
+					{% for p, (url, ct_format) in suid2urls_dic.items() %}
+					<option value="{{ url }}"
+					{% if selected_suid == p %}selected{% endif %}
+					data-suid="{{ p }}"
+					data-type="{{ ct_format }}">
+					{{ p }}
+					</option>
+					{% endfor %}
+				</select>
+			</div>
+			<div>
+				<a href='#' id='prev'>PREV</a>
+				<input id='index_disp' type="text"></input>
+				<a href='#' id='next'>NEXT</a>
+			</div>
+		</div>
+		<div id="canvas-group">
+			<div class="canvas-container" id="main-canvas-container">
+			</div>
+		<!--
+			<div id="horizontal-profile">
+				{# where horizontal profile plots go #}
+			</div>
+			<div id="vertical-profile">
+				{# where vertical profile plots go #}
+			</div>
+		-->
+			<div id="prediction">
+				<table id='candidate'>
+					<thead>
+						<tr>
+							<th colspan=4 style="text-align:center;">
+								Candidates
+								<span id='prediction-spinner'>
+									{# where the spinner goes #}
+								</span>
+							</th>
+						</tr>
+						<tr>
+							<th>X</th>
+							<th>Y</th>
+							<th>Z</th>
+							<th>Probability</th>
+						</tr>
+					</thead>
+					<tbody>
+						<!-- populated by AJAX call -->
+					</tbody>
+					<tfoot>
+						<tr>
+						<tr>
+					</tfoot>
+				</table>
+			</div>
+		</div>
+		<div>
+			<h3>Upload CT (Zip file of MHD/RAW or DICOMs)</h3>
+			<form action='{{ url_for(".upload_file") }}' method='POST' enctype="multipart/form-data">
+				<input type='file' name="upload_file"></input>
+				<input type='submit' name='upload_submit'></input>
+			</form>
+		</div>
+	</body>
+</html>
+<!--
+vim: iskeyword+=-
+-->

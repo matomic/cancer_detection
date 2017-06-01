@@ -293,6 +293,8 @@ class LunaCase(object):
         self.h = None
         self.nodules = None
 
+        self.readImageFile()
+
     @property
     def hashid(self):
         '''The random part of series uid'''
@@ -395,7 +397,7 @@ class LunaImageMaskApp(PipelineApp):
         '''Process LUNA2016 data {subset}, using annotation CSV file {df_node}'''
 
         for case in LunaCase.iterLunaCases(self.dirs.data_dir, subset, df_node):
-            case.readImageFile() # Load image file and populate case.image and other attributes
+            # case.readImageFile()
             Nz, Nx, Ny = case.image.shape
             assert (Nx, Ny) == (512, 512)
             assert case.spacing[0]==case.spacing[1], 'CT data not evenly space'

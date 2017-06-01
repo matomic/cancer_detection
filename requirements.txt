@@ -14,5 +14,13 @@ tensorflow-gpu
 tqdm
 trans
 
+dicom
+flask
+#flask-genshi
+uwsgi
+dicom
+
 ipdb
+jupyter
 pylint
+ipykernel
