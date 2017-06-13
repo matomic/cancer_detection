@@ -49,3 +49,8 @@ python unet/trainNodule.py --session 2017-05-11 --config-n3d N2
 ```sh
 python unet/predict.py --session 2017-05-11 {path_to_mhd}
 ```
+
+## Run webapp
+```sh
+python unet/sliceviewer/webapp.py
+```
