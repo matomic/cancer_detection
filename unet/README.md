@@ -45,6 +45,15 @@ In this case it is `config_N2.py`.
 python unet/trainNodule.py --session 2017-05-11 --config-n3d N2
 ```
 
+## Use Make
+One can also run the above steps via `make` as well:
+```shell
+make img_mask
+make train_unet
+make nodules
+make train_n3d
+```
+
 ## Run inference
 ```sh
 python unet/predict.py --session 2017-05-11 {path_to_mhd}
