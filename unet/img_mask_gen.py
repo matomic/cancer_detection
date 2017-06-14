@@ -23,7 +23,7 @@ import h5py
 import numpy as np
 
 # in-house
-from .console import PipelineApp
+from console import PipelineApp
 
 ## debugging
 from pprint import pprint
@@ -248,12 +248,12 @@ def get_img_mask_npy(case, lung_mask, z, img_path, mask_path, save_npy=True, laz
         mask = mask.astype(np.uint8)
         if save_npy:
             np.save(img_path, img)
-            if not mask_path: # issue warning on why mask is not generated; comment out if too verbose.
-                print("not saving mask for {}/{} due to null mask_path value.".format(case.hashid, z))
-            elif not np.any(mask):
-                print("not saving mask for {}/{} due to null mask array value.".format(case.hashid, z))
-            else:
+            if mask_path and np.any(mask):
                 np.save(mask_path, mask)
+            elif not mask_path: # warning
+                print("not saving mask for {}/{} due to null mask_path value.".format(case.hashid, z))
+            #else:
+            #    print("not saving mask for {}/{} due to null mask array value.".format(case.hashid, z))
     return img, mask
 
 
@@ -418,7 +418,7 @@ class LunaImageMaskApp(PipelineApp):
                     self.h5file.require_group('lung_masks').create_dataset(case.hashid, data=lung_mask)
 
             #
-            for z in xrange(Nz):
+            for z in range(Nz):
                 #z_is_in_nodule = any(LunaCase.isInNodule(z, nod) for nod in case.nodules)
                 is_nod_center = z in nodule_z # nodule is centered at z
                 if not (is_nod_center or z%2):
@@ -486,7 +486,7 @@ class LunaImageMaskApp(PipelineApp):
     def _main_impl(self):
         '''conole script entry point'''
         df_node = LunaCase.readNodulesAnnotation(self.dirs.csv_dir)
-        for subset in xrange(10):
+        for subset in range(10):
             if self.parsedArgs.subset and subset not in self.parsedArgs.subset:
                 continue
             print("processing subset ",subset)

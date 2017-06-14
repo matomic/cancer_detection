@@ -29,3 +29,8 @@ pip install -r requirements.txt
 Your virtual environment is now set up with packages necessary to run codes here.
 If during your development, you require a new Python package to be installed,
 add/update the entry in `requirements.txt` and run the above command again.
+
+# Run webapp
+```shell
+LUNA_DIR=/path/to/luna/data/  PYTHONPATH='unet:.' python sliceviewer/webapp.py
+```

@@ -19,7 +19,7 @@ from keras import backend as K
 def hist_summary(folds_history):
     '''(つ・▽・)つ⊂(・▽・⊂)'''
     res = None
-    for h in folds_history.itervalues():
+    for h in folds_history.values():
         if res is None:
             val_names = [k for k in h.keys() if k.startswith('val_')]
             res = {n:[] for n in val_names}
@@ -140,7 +140,7 @@ class dotdict(dict):
         '''Generate instance recursively from dict {d}'''
         return cls({
             k : cls.recursiveFrom(v) if isinstance(v, dict) else v
-            for k, v in d.iteritems()})
+            for k, v in d.items()})
 
 def get_json_type(obj):
     """Serialize any object to a JSON-serializable structure.
@@ -183,8 +183,8 @@ def safejsondump(j, f, *args, **kwds):
 def numpy4json(j, seen_set=None):
     '''clean up object {j} for JSON serialization'''
     if isinstance(j, collections.Mapping):
-        return { k : numpy4json(v) for k, v in j.iteritems() }
-    if isinstance(j, tuple(np.typeDict.itervalues())):
+        return { k : numpy4json(v) for k, v in j.items() }
+    if isinstance(j, tuple(np.typeDict.values())):
         return j.tolist()
     #if isinstance(j, collections.Iterable):
     #    return [numpy4json(v) for v in j]
@@ -193,9 +193,9 @@ def numpy4json(j, seen_set=None):
 def config_json(config_dict):
     '''Return a JSON-serializable structure of config'''
     return {
-            k: v for k, v in config_dict.iteritems()
+            k: v for k, v in config_dict.items()
             if not k.startswith('_')
-            and isinstance(v, (int, float, basestring, dict, list, tuple, set))
+            and isinstance(v, (int, float, str, dict, list, tuple, set))
             }
 
 # eof

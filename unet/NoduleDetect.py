@@ -21,10 +21,10 @@ import numpy as np
 import matplotlib.image as mplimage
 
 # in-house
-from .console import PipelineApp
-from .img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy, normalize
-from .utils import dice_coef, safejsondump
-from .train import unet_from_checkpoint, UnetTrainer
+from console import PipelineApp
+from img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy, normalize
+from utils import dice_coef, safejsondump
+from train import unet_from_checkpoint, UnetTrainer
 
 # DEBUGGING
 from pprint import pprint
@@ -40,7 +40,7 @@ def getmodel(tag, fold, cfg):
     model = load_model(model_path, custom_objects={'loss': loss_func})
     return model
 
-NoduleCandidate = collections.namedtuple('_NC_xyz', ('volume_array', 'x', 'y', 'z', 'd', 'is_nodule'))
+NoduleCandidate = collections.namedtuple('NoduleCandidate', ('volume_array', 'x', 'y', 'z', 'd', 'is_nodule'))
 
 
 class NoduleDetectApp(PipelineApp):
@@ -206,7 +206,7 @@ class NoduleDetectApp(PipelineApp):
 
             # save candidate list
             with open(os.path.join(self.output_dir,'{}.pkl'.format(case.hashid)), 'wb') as output:
-                pickle.dump(candidate_list, output)
+                pickle.dump([tuple(x) for x in candidate_list], output)
 
             # save missed detection
             for xyzd in case.nodules:
@@ -270,7 +270,7 @@ class NoduleDetectApp(PipelineApp):
 
         df_node = LunaCase.readNodulesAnnotation(self.dirs.csv_dir)
 
-        for subset in xrange(10):
+        for subset in range(10):
             if self.parsedArgs.subset and subset not in self.parsedArgs.subset:
                 continue
             print("processing subset ",subset)

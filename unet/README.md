@@ -9,7 +9,7 @@ The 10 subset folders should reside in `${LUNA_DIR}/data`.
 
 ## Run preprocessing:
 ```sh
-python img_mask_gen.py --lazy --config-unet v5
+python img_mask_gen.py --session 2017-05-11 --config-unet v5 --lazy
 ```
 This generates image and nodule mask pairs
 as well as lung segmentation masks
@@ -48,9 +48,4 @@ python unet/trainNodule.py --session 2017-05-11 --config-n3d N2
 ## Run inference
 ```sh
 python unet/predict.py --session 2017-05-11 {path_to_mhd}
-```
-
-## Run webapp
-```sh
-python unet/sliceviewer/webapp.py
 ```

@@ -23,11 +23,11 @@ from keras.models import load_model
 #from keras.objectives import categorical_crossentropy
 
 # in-house
-from .console import PipelineApp
-from .img_augmentation import ImageAugment
-from .load_data import ImgStream, TrainValidDataset
-from .models import get_unet
-from .utils import dice_coef, hist_summary, safejsondump, config_json
+from console import PipelineApp
+from img_augmentation import ImageAugment
+from load_data import ImgStream, TrainValidDataset
+from models import get_unet
+from utils import dice_coef, hist_summary, safejsondump, config_json
 
 # DEBUGGING
 from pprint import pprint
@@ -195,7 +195,7 @@ class UnetTrainer(PipelineApp):
             # Save configuration and model to JSON before training
             train_json = {
                     '__id__'  : { 'name' : 'unet', 'tag' : self.unet_cfg.tag, 'fold' : fold, 'ts': time.time(), 'dt' : datetime.datetime.now().isoformat() },
-                    'config'  : config_json(self.unet_cfg),
+                    'config'  : config_json(self.unet_cfg.__dict__),
                     #'model'   : model.get_config(), # model architecture
                     'model'   : { 'checkpoint_path' : checkpoint_path },
                     #'history' : folds_history,

@@ -71,7 +71,7 @@ class ImgStreamBase(object):
             if shuffle:
                 np.random.shuffle(sample_idx)
             # NOTE: this can be split up per GPU
-            for b in xrange(N_batch):
+            for b in range(N_batch):
                 batch_slice = slice(b*self.batch_size, (b+1)*self.batch_size)
                 batch_idx = sample_idx[batch_slice]
                 if cycle and len(batch_idx) < self.batch_size:
