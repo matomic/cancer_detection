@@ -183,11 +183,11 @@ class UnetTrainer(PipelineApp):
                 K.set_session(sess)
                 if os.path.isfile(checkpoint_path):
                     if os.path.isfile(configjson_path):
-                        loss_args = json.load(configjson_path)['config']['loss_args']
+                        loss_args = json.load(open(configjson_path,'r'))['config']['loss_args']
                     else:
                         loss_args = self.unet_cfg.loss_args
                         print("Cannot find associated config JSON: {}".format(configjson_path))
-                    model = unet_from_checkpoint(checkpoint_path, **loss_args)
+                    model = unet_from_checkpoint(checkpoint_path, loss_args)
                 else:
                     model = unet_from_scratch(self.unet_cfg, self.unet_cfg.loss_args)
                 model.summary()
@@ -205,7 +205,7 @@ class UnetTrainer(PipelineApp):
             with K.tf.device('/gpu:0'):
                 K.set_session(sess)
                 set_trace()
-                num_epochs = 1
+                num_epochs = 40
                 epoch_size = 3000
                 history = model.fit_generator(tds.train,
                         steps_per_epoch  = (epoch_size // batch_size) * batch_size,
