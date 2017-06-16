@@ -135,7 +135,7 @@ class NoduleDetectApp(PipelineApp):
 
         candidate_list = []
         detected_set = set()
-        W, H = output_shape
+        W, H, C = output_shape
 
         for count, val in sorted(zip(counts, vals), reverse=True):
             ## Obvious candiate rejection
@@ -148,8 +148,8 @@ class NoduleDetectApp(PipelineApp):
             #    continue
             # output result image with WIDTH
             cx_min, cx_max = cx-W//2, cx+W//2
-            cy_min, cy_max = cy-W//2, cy+W//2
-            cz_min, cz_max = cz-H//2, cz+H//2
+            cy_min, cy_max = cy-H//2, cy+H//2
+            cz_min, cz_max = cz-C//2, cz+C//2
 
             if cy_min<=0 or cy_max>512 or cx_min<=0 or cx_max>512 or cz_min<=0 or cz_max>=model_in.shape[0]:
                 continue # ignore region that is outside of CT volume
@@ -159,7 +159,7 @@ class NoduleDetectApp(PipelineApp):
             out = np.transpose(model_in[cz_min:cz_max, cy_min:cy_max, cx_min:cx_max, 0]+0.05, (1,2,0)) # crop volumn, tranpose to y-x-z?
             #except Exception:
             #    continue
-            assert out.shape == (W,W,H), 'bad shape: {!r} != {!r}'.format(out.shape, (W,W,H))
+            assert out.shape == (W,H,C), 'bad shape: {!r} != {!r}'.format(out.shape, (W,H,C))
 
             ## Attach training label, 0 or 1, for whether this candidate is a known nodule. If training_case is None, label None.
             if training_case is None:
@@ -206,7 +206,7 @@ class NoduleDetectApp(PipelineApp):
 
             # save candidate list
             with open(os.path.join(self.output_dir,'{}.pkl'.format(case.hashid)), 'wb') as output:
-                pickle.dump([tuple(x) for x in candidate_list], output)
+                pickle.dump([tuple(x) for x in candidate_list], output) # pickle does not work with namedtuple :(
 
             # save missed detection
             for xyzd in case.nodules:
@@ -252,7 +252,7 @@ class NoduleDetectApp(PipelineApp):
     checkpoint_path_fmrstr = UnetTrainer.checkpoint_path_fmrstr
     def _main_impl(self):
         ## output nodule image size
-        output_shape = (self.n3d_cfg.WIDTH, self.n3d_cfg.HEIGHT)
+        output_shape = (self.n3d_cfg.WIDTH, self.n3d_cfg.HEIGHT, self.n3d_cfg.CHANNEL)
 
         self.statistics = collections.defaultdict(int)
         #self.statistics['detected_nodule_list'] = []

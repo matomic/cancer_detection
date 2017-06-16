@@ -18,6 +18,7 @@ from keras.models import load_model
 from img_augmentation2 import ImageDataGenerator
 from models import get_3Dnet
 from console import PipelineApp
+from NoduleDetect import NoduleCandidate
 from utils import safejsondump, config_json
 
 # DEBUG
@@ -96,25 +97,26 @@ class NoduleNetTrainer(PipelineApp):
         assert os.path.isdir(self.input_dir), 'not a valid dir: {}'.format(self.input_dir)
         print("loading {} ...".format(self.input_dir))
         ids   = os.listdir(self.input_dir)
-        data  = [pickle.load(open(os.path.join(self.input_dir, i),'rb')) for i in ids]
+        data  = [[NoduleCandidate(*c) for c in pickle.load(open(os.path.join(self.input_dir, i), 'rb'))] for i in ids]
         return data
 
     checkpoint_path_fmrstr = '{net}_{WIDTH}_{tag}_fold{fold}.hdf5'
     def _main_impl(self):
-        data  = self.getInputData()
-        Ncase = np.sum(len(imgs) for imgs, _ls in data)
+        cases = self.getInputData()
+        Ncase = np.sum(len(candidates) for candidates in cases)
 
         Y  = np.zeros(Ncase)
         W  = self.n3d_cfg.WIDTH
+        H  = self.n3d_cfg.HEIGHT
         NC = self.n3d_cfg.CHANNEL
-        X  = np.zeros((len(Y), W, W, NC), dtype=npf32_t) #set to 0 for empty chanels
+        X  = np.zeros((len(Y), W, H, NC), dtype=npf32_t) #set to 0 for empty chanels
         c  = 0
-        for imgs, lbls in data:
-            nx = len(imgs)
+        for candidates in cases:
+            nx = len(candidates)
             if nx == 0:
                 continue
-            Y[c:c+nx] = lbls
-            X[c:c+nx] = imgs
+            Y[c:c+nx] = [c.is_nodule for c in candidates]
+            X[c:c+nx] = [c.volume_array for c in candidates]
             c += nx
         print("total training cases ", Ncase)
         print("percent Nodules: ",np.sum(Y)/Ncase)
