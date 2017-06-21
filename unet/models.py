@@ -97,6 +97,12 @@ def get_unet(version, W, H, **cfg_dict):
                 #x_out = LeakyReLU(0.1)(x_out)
         return x_out
 
+    def unet_conv_down(x_in, nf):
+        '''Generate downsampling convolution layer'''
+        x_out = Convolution2D(nf, (3, 3), strides=2, padding='same', activation='relu')(x_in)
+        x_out = BN(axis=c)(x_out)
+        return x_out
+
     if version == 0:
         # dummpy archietecture
         n0 = 8
@@ -140,7 +146,7 @@ def get_unet(version, W, H, **cfg_dict):
         net = UpSampling2D(size=(2,2))(net)
         net = unet_conv(net, n0, rep=1)
         labels = Convolution2D(1, (3, 3), activation='sigmoid', padding='same', name='labels')(net)
-    elif version==3:
+    elif version == 3:
         sub_rep = cfg_dict['subsampling_conv_repeat'] # number fo time conv2d/BN layers are repeated on the way down
         sup_rep = cfg_dict['upsampling_conv_repeat']  # number of time conv2d/BN layers are repeated on the way up
         n0 = 8                                     #    (?, 512, 512, 1)
@@ -174,6 +180,41 @@ def get_unet(version, W, H, **cfg_dict):
         net = unet_conv(net, n0*2, rep=sup_rep)          # -> (?, 256, 256, 16)
         net = UpSampling2D(size=(2,2))(net)        # -> (?, 512, 512, 16)
         net3 = unet_conv(net, n0, rep=sup_rep)           # -> (?, 512, 512, 8)
+
+        net = concatenate([net5,net4,net3], axis=-1) # -> (?, 512, 512, 24)
+        labels = Convolution2D(1, (1, 1), activation='sigmoid', padding='same', name='labels')(net) # -> (?, 512, 512, 1)
+    elif version == 4:
+        n0 = 8
+        cov1 = unet_conv(inputs, n0, rep=1)        #    (?, 512, 512, 1)
+        net  = unet_conv_down(cov1, n0)            # -> (?, 512, 512, 8)
+        cov2 = unet_conv(net,  n0*2, rep=1)        # -> (?, 256, 256, 8)
+        net  = unet_conv_down(cov2, n0*2)          # -> (?, 256, 256, 16)
+        cov3 = unet_conv(net,  n0*4, rep=1)        # -> (?, 128, 128, 16)
+        net  = unet_conv_down(cov3, n0*4)          # -> (?, 128, 128, 32)
+        cov4 = unet_conv(net,  n0*8, rep=1)        # -> (?, 64, 64, 32)
+        net  = unet_conv_down(net, n0*8)           # -> (?, 64, 64, 64)
+        cov5 = unet_conv(net, n0*16, rep=1)        # -> (?, 32, 32, 64)
+        #5                                         # -> (?, 32, 32, 128)
+        net = UpSampling2D(size=(2,2))(cov5)       # -> (?, 64, 64, 128)
+        net = unet_conv(net, n0*8, rep=1)          # -> (?, 64, 64, 64)
+        net = UpSampling2D(size=(2,2))(net)        # -> (?, 128, 128, 64)
+        net = unet_conv(net, n0*4, rep=1)          # -> (?, 128, 128, 32)
+        net = UpSampling2D(size=(2,2))(net)        # -> (?, 256, 256, 32)
+        net = unet_conv(net, n0*2, rep=1)          # -> (?, 256, 256, 16)
+        net = UpSampling2D(size=(2,2))(net)        # -> (?, 512, 512, 16)
+        net5 = unet_conv(net, n0, rep=1)           # -> (?, 512, 512, 8)
+        #4
+        net = UpSampling2D(size=(2,2))(cov4)       # -> (?, 128, 128, 64)
+        net = unet_conv(net, n0*4, rep=1)          # -> (?, 128, 128, 32)
+        net = UpSampling2D(size=(2,2))(net)        # -> (?, 256, 256, 32)
+        net = unet_conv(net, n0*2, rep=1)          # -> (?, 256, 256, 16)
+        net = UpSampling2D(size=(2,2))(net)        # -> (?, 512, 512, 16)
+        net4 = unet_conv(net, n0, rep=1)           # -> (?, 512, 512, 8)
+        #3
+        net = UpSampling2D(size=(2,2))(cov3)       # -> (?, 256, 256, 32)
+        net = unet_conv(net, n0*2, rep=1)          # -> (?, 256, 256, 16)
+        net = UpSampling2D(size=(2,2))(net)        # -> (?, 512, 512, 16)
+        net3 = unet_conv(net, n0, rep=1)           # -> (?, 512, 512, 8)
 
         net = concatenate([net5,net4,net3], axis=-1) # -> (?, 512, 512, 24)
         labels = Convolution2D(1, (1, 1), activation='sigmoid', padding='same', name='labels')(net) # -> (?, 512, 512, 1)
