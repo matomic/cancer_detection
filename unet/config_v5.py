@@ -5,7 +5,7 @@ from console import NetSpecs
 tag = 5
 
 ## UNet architecture
-unet = NetSpecs(
+net = NetSpecs(
         name    = 'unet',
         version = 3,
         params  = {

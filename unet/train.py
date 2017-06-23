@@ -3,15 +3,12 @@ from __future__ import print_function
 from __future__ import division
 
 # stdlib
-import datetime
 import functools
 import os
 import sys
-import time
 import argparse
 
 # 3rd-party
-import simplejson as json
 import numpy as np
 #import pandas as pd
 #import tensorflow as tf
@@ -26,13 +23,14 @@ from keras.models import load_model
 from console import PipelineApp
 from img_augmentation import ImageAugment
 from load_data import ImgStream, TrainValidDataset
-from loss import dice_coef_loss
+from loss import get_loss
 from models import get_unet
-from utils import hist_summary, safejsondump, config_json
+from utils import hist_summary
 
 # DEBUGGING
 from pprint import pprint
 from ipdb import set_trace
+
 
 def fit_callbacks(chkpt_path):
 	'''Return call back functions during fitting'''
@@ -57,34 +55,25 @@ def fit_callbacks(chkpt_path):
 	    earlystop
 	    ]
 
-def unet_from_checkpoint(chkpt_path, loss_args):
-	'''Load pre-trained Unet model from {chkpt_path}'''
-	#if cfg is None:
-	#    chkpt_json = os.path.splitext(chkpt_path)[0] + '.json'
-	#    if os.path.isfile(chkpt_json):
-	#        # load loss function from accompanied configuration JSON
-	#        cfg = json.load(open(chkpt_json, 'r'))['config']
-	#        loss_args = cfg['loss_args']
-	#    else:
-	#        print("Cannot find associated config JSON: {}".format(chkpt_json))
-	#else:
-	#    loss_args = cfg.loss_args
-	#loss_func = functools.partial(dice_coef, negate=True, **loss_args)
-	#loss_func.__name__ = 'dice_coef' # Keras explicitly check loss function's __name__ even if customized
-	model = load_model(chkpt_path, custom_objects={
-	    'dice_coef' : dice_coef_loss(**loss_args)
-	    })
-	print("model loaded from {}".format(chkpt_path))
-	return model
-
-def unet_from_scratch(cfg, loss_args):
-	'''Load untrained Unet model, with configuration {cfg}'''
-	model =  get_unet(cfg.unet.version, cfg.HEIGHT, cfg.WIDTH, **cfg.unet.params)
+def load_unet(cfg, checkpoint_path=None):
+	'''Load and compile model from scratch or from {checkpoint_path}'''
+	loss = get_loss(cfg.loss_func, cfg.loss_args)
+	if checkpoint_path:
+		if isinstance(loss, str):
+			custom_objects = {}
+		else:
+			custom_objects = {
+			    loss.__name__ : loss
+			}
+		model = load_model(checkpoint_path, custom_objects=custom_objects, compile=False)
+		print("model loaded from {}".format(checkpoint_path))
+	else:
+		model = get_unet(cfg.net.version, cfg.HEIGHT, cfg.WIDTH, **cfg.net.params)
+		print("model loaded from scratch")
 	model.compile(
 	    optimizer = getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
-	    loss = dice_coef_loss(**loss_args),
+	    loss = loss
 	    )
-	print("model loaded from scratch")
 	return model
 
 
@@ -114,7 +103,7 @@ class UnetTrainer(PipelineApp):
 		# as where we will be saving the result.  To use "standard" training data, make a symbolic link from result_dir back to root dir.
 		img_mask_dir = os.path.join(self.result_dir, 'img_mask')
 		assert os.path.isdir(img_mask_dir), 'image/nodule mask pairs are expected in {}. It does not exist'.format(img_mask_dir)
-		self.full_train_data = ImgStream(self.result_dir, "train", batch_size=self.fitter['batch_size'], unlabeled_ratio=self.unet_cfg.unlabeled_ratio)
+		self.full_train_data = ImgStream(img_mask_dir, "train", batch_size=self.fitter['batch_size'], unlabeled_ratio=self.unet_cfg.unlabeled_ratio)
 
 	def _main_impl(self):
 		if self.parsedArgs.debug:
@@ -122,20 +111,14 @@ class UnetTrainer(PipelineApp):
 		else:
 			self.do_train()
 
-	def get_train_data(self, fold, NCV, augment_generator=None):
+	def get_train_data(self, fold, NCV, augmentTrain=None):
 		'''Return training data generators for {fold}
-		{augment_generator}, if not None, should be a function that takes a generator of training data and returns another generator of augmented input data.
+		{augmentTrain}, if not None, should be a function that takes a generator of training data and returns another generator of augmented input data.
 		'''
 		if fold < NCV:# CV
-			dataset = self.full_train_data.CV_fold_gen(fold, NCV, shuffleTrain=True)
+			dataset = self.full_train_data.CV_fold_gen(fold, NCV, shuffleTrain=True, augmentTrain=augmentTrain)
 		else:#all training data
 			dataset = self.full_train_data.all_gen(shuffle=True)
-
-		if augment_generator:
-			dataset = TrainValidDataset(
-			    augment_generator(dataset.train),
-			    dataset.validation,
-			    dataset.size)
 		return dataset
 
 #	def trainfor(model, tds, epochs, steps_per_epoch, chkpt_path, fitter):
@@ -173,60 +156,50 @@ class UnetTrainer(PipelineApp):
 			assert fold <= NCV
 			print("--- CV for fold: {}".format(fold))
 
-			tds = self.get_train_data(fold, NCV, imgAug)
+			tds = self.get_train_data(fold, NCV, augmentTrain=imgAug)
+
 			if fold < NCV:#CV
 				num_epochs = self.fitter['num_epochs']
 			else:
 				assert False, 'bad branch'
 				num_epochs = int(np.mean(folds_best_epoch)+1) if folds_best_epoch else self.fitter['num_epochs']
 
-			#now_dt = datetime.datetime.now()
-			#now_str = '.'.join(now_dt.isoformat().split('.')[:-1])
-			#chkpt_path = os.path.join(self.cfg.params_dir, '{}_unet_{}_{}_fold{}.hdf5'.format(now_str, self.cfg.WIDTH, tag, fold))
-			#chkpt_path = os.path.join(self.cfg.dirs.params_dir, self.parsedArgs.session, 'unet_{}_{}_fold{}.hdf5'.format(self.cfg.WIDTH, tag, fold))
-			checkpoint_path = self.checkpoint_path('unet', fold, WIDTH=self.unet_cfg.WIDTH, tag=self.unet_cfg.tag)
-			configjson_path = self.subst_ext(checkpoint_path, '.json')
+			train_dict = self.session_json['unet'].setdefault('models', {}).setdefault(fold, {})
+			if 'checkpoint_path' in train_dict:
+				checkpoint_path = os.path.join(self.result_dir, train_dict['checkpoint_path'])
+			else:
+				checkpoint_path = self.checkpoint_path('unet', fold, WIDTH=self.unet_cfg.WIDTH, tag=self.unet_cfg.tag)
 
 			with K.tf.device('/gpu:0'):
 				K.set_session(sess)
 				if os.path.isfile(checkpoint_path):
-					if os.path.isfile(configjson_path):
-						loss_args = json.load(open(configjson_path,'r'))['config']['loss_args']
-					else:
-						loss_args = self.unet_cfg.loss_args
-						print("Cannot find associated config JSON: {}".format(configjson_path))
-					model = unet_from_checkpoint(checkpoint_path, loss_args)
+					model = load_unet(self.unet_cfg, checkpoint_path)
 				else:
-					model = unet_from_scratch(self.unet_cfg, self.unet_cfg.loss_args)
+					model = load_unet(self.unet_cfg)
 				model.summary()
 
 			# Save configuration and model to JSON before training
-			train_json = {
-			    '__id__'  : { 'name' : 'unet', 'tag' : self.unet_cfg.tag, 'fold' : fold, 'ts': time.time(), 'dt' : datetime.datetime.now().isoformat() },
-			    'config'  : config_json(self.unet_cfg.__dict__),
-			    #'model'   : model.get_config(), # model architecture
-			    'model'   : { 'checkpoint_path' : checkpoint_path },
-			    #'history' : folds_history,
-			    }
-			safejsondump(train_json, configjson_path, 'w')
+			train_dict['checkpoint_path'] = os.path.basename(checkpoint_path)
+			self.dump_session()
 
 			with K.tf.device('/gpu:0'):
 				K.set_session(sess)
-				set_trace()
 				num_epochs = 40
-				epoch_size = 3000
+
+				set_trace()
+
 				history = model.fit_generator(tds.train,
-				    steps_per_epoch  = (epoch_size // batch_size) * batch_size,
+				    steps_per_epoch  = (tds.train_size // batch_size),
 				    epochs           = num_epochs,
 				    validation_data  = tds.validation,
-				    validation_steps = tds.size // NCV,
+				    validation_steps = tds.validation_size // NCV,
 				    callbacks        = fit_callbacks(checkpoint_path)
 				    )
 
 			#history has epoch and history atributes
-			train_json['history'] = folds_history[fold] = history.history
+			train_dict['history'] = folds_history[fold] = history.history
 			folds_best_epoch.append(np.argmin(history.history['val_loss']))
-			safejsondump(train_json, configjson_path)
+			self.dump_session()
 			del model
 
 		##save the full fitting history file for later study
@@ -241,24 +214,43 @@ class UnetTrainer(PipelineApp):
 		'''run this when --debug is specified'''
 		sess = K.tf.Session(config=K.tf.ConfigProto(allow_soft_placement=True, log_device_placement=False))
 		K.set_session(sess)
-		chkpt_path = self.parsedArgs.chkpt_path or 'debug_checkpoint.h5'
+		#chkpt_path = self.parsedArgs.chkpt_path or 'debug_checkpoint.h5'
 		fitter = self.unet_cfg.fitter
+		batch_size = fitter['batch_size']
 		fold = 0
-		if os.path.isfile(chkpt_path):
-			model = unet_from_checkpoint(chkpt_path, self.unet_cfg.loss_args)
+
+		train_dict = self.session_json['unet'].setdefault('models', {}).setdefault(fold, {})
+		if 'checkpoint_path' in train_dict:
+			checkpoint_path = os.path.join(self.result_dir, train_dict['checkpoint_path'])
 		else:
-			model = unet_from_scratch(self.unet_cfg, self.unet_cfg.loss_args)
+			checkpoint_path = self.checkpoint_path('unet', fold, WIDTH=self.unet_cfg.WIDTH, tag=self.unet_cfg.tag)
+
+		if os.path.isfile(checkpoint_path):
+			model = load_unet(self.unet_cfg, checkpoint_path)
+		else:
+			model = load_unet(self.unet_cfg)
 		model.summary()
+
 		#a_func = functools.partial(ImageAugment(**config.aug).flow_gen, mode='fullXY')
-		training_set = ImgStream(self.root, "train", batch_size=fitter['batch_size'], unlabeled_ratio=self.unet_cfg.unlabeled_ratio)
-		tds = training_set.all_gen(cycle=False, shuffle=False, test=False)
-		loss = model.evaluate_generator(tds.train, steps=3000//fitter['batch_size'])
-		print(loss)
-		tds = self.get_train_data(training_set, fold)
-		#self.trainfor(model, tds, epochs=1, chkpt_path=chkpt_path,
-		#        steps_per_epoch = 300 # quick epoch
-		#        )
-		assert os.path.isfile(chkpt_path)
+		tds = self.full_train_data.CV_fold_gen(fold=0, folds=10, cycle=False, shuffleTrain=False)
+
+		x_imag_tf = K.tf.placeholder(shape=(None, 512, 512, 1), dtype=K.tf.float32)
+		y_true_tf = K.tf.placeholder(shape=(None, 512, 512, 1), dtype=K.tf.float32)
+		y_pred_tf = model(x_imag_tf)
+		loss_1 = get_loss('weighted_dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5)
+		loss_2 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5)
+		loss_3 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5, p_ave=0)
+		loss_4 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5, p_ave=1)
+
+		out = []
+		for n, (x, y) in enumerate(tds.validation):
+			out.append(
+					sess.run([loss_1, loss_2, loss_3, loss_4],
+						{x_imag_tf: x, y_true_tf: y, K.learning_phase(): False})
+					)
+			print('{:d}: {}'.format(n, out[-1]))
+
+		set_trace()
 
 if __name__=='__main__':
 	sys.exit(UnetTrainer().main() or 0)

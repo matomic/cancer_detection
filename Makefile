@@ -4,6 +4,7 @@ SHELL=/bin/bash
 # Global environments, overwrite with make VAR=VAL
 VENV        ?= ./cancer_venv#
 LUNA_DIR    ?= /var/data/mlfzhang/LUNA/data_root
+# uses current date for session name, make sure to overwrite this with appropriate value:
 SESSION     ?= $(shell date -Idate)
 CONFIG_UNET ?= v5
 CONFIG_N3D  ?= N2
