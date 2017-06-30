@@ -5,15 +5,15 @@ from __future__ import print_function, division
 # stdlib
 import argparse
 import collections
-import functools
+#import functools
 #import glob
-import itertools
+#import itertools
 import os
 import pickle
 import sys
 
 # 3rd-party
-from keras.models import load_model
+#from keras.models import load_model
 from skimage import measure, segmentation
 #from tqdm import tqdm
 #import nibabel as nib
@@ -23,8 +23,8 @@ import matplotlib.image as mplimage
 # in-house
 from console import PipelineApp
 from img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy, normalize
-from utils import dice_coef, safejsondump
-from train import unet_from_checkpoint, UnetTrainer
+from utils import safejsondump
+from train import load_unet, UnetTrainer
 
 # DEBUGGING
 from pprint import pprint
@@ -32,13 +32,6 @@ from ipdb import set_trace
 
 npf32_t = np.float32 # pylint: disable=no-member
 
-### loss fuction to make getmodel work, copied from segment/utils.py
-def getmodel(tag, fold, cfg):
-    '''Return the 2D Unet model of {tag} (version) with {fold}'''
-    loss_func = functools.partial(dice_coef, smooth=10, pred_mul=1.0, p_ave=0.6, negate=True)
-    model_path=os.path.join(cfg.params_dir, 'unet_{}_{}_fold{}.hdf5'.format(512, tag, fold))
-    model = load_model(model_path, custom_objects={'loss': loss_func})
-    return model
 
 NoduleCandidate = collections.namedtuple('NoduleCandidate', ('volume_array', 'x', 'y', 'z', 'd', 'is_nodule'))
 
@@ -252,7 +245,7 @@ class NoduleDetectApp(PipelineApp):
     checkpoint_path_fmrstr = UnetTrainer.checkpoint_path_fmrstr
     def _main_impl(self):
         ## output nodule image size
-        output_shape = (self.n3d_cfg.WIDTH, self.n3d_cfg.HEIGHT, self.n3d_cfg.CHANNEL)
+        output_shape = (self.n3d_cfg.net.WIDTH, self.n3d_cfg.net.HEIGHT, self.n3d_cfg.net.CHANNEL)
 
         self.statistics = collections.defaultdict(int)
         #self.statistics['detected_nodule_list'] = []
@@ -263,10 +256,10 @@ class NoduleDetectApp(PipelineApp):
         #cfg = __import__('config_v{}'.format(tags[0])) # NOTE: need to handle multiple tag case?
         #models = [getmodel(int(t), 0, cfg) for t in tags]
 
-        checkpoint_path = self.checkpoint_path('unet', fold=0, WIDTH=self.unet_cfg.WIDTH, tag=self.unet_cfg.tag)
+        checkpoint_path = self.checkpoint_path('unet', fold=0, WIDTH=self.unet_cfg.net.WIDTH, tag=self.unet_cfg.tag)
         assert os.path.isfile(checkpoint_path), checkpoint_path
 
-        models = [unet_from_checkpoint(checkpoint_path, self.unet_cfg.loss_args)]
+        models = [load_unet(self.unet_cfg, checkpoint_path=checkpoint_path)]
 
         df_node = LunaCase.readNodulesAnnotation(self.dirs.csv_dir)
 

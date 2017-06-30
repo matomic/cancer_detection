@@ -3,10 +3,18 @@ from config import NetSpecs
 
 tag = 2
 #not working better
+
+## -------------------------------------------------
+## ----- model specification ----
+## -------------------------------------------------
+#image size
 net = NetSpecs(
         name = 'Sample3D',
         version = 1,
-        params = None
+        params = None,
+        WIDTH   = 64,
+        HEIGHT  = 64,
+        CHANNEL = 16,
         )
 
 ## -------------------------------------------------
@@ -21,14 +29,6 @@ fitter = {
         'opt' : 'Adam',
         'opt_arg' : { 'lr' : 2e-4 },
         }
-
-## -------------------------------------------------
-## ----- model specification ----
-## -------------------------------------------------
-#image size
-WIDTH   = 64
-HEIGHT  = 64
-CHANNEL = 16
 
 ## -------------------------------------------------
 ## ----- image augmentation parameters ----

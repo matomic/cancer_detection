@@ -1,13 +1,19 @@
 '''Configuration file'''
-from console import NetSpecs
+from config import NetSpecs
 
 #score - 0.75
 tag = 5
 
 ## UNet architecture
+## -------------------------------------------------
+## ----- model specification ----
+## -------------------------------------------------
 net = NetSpecs(
         name    = 'unet',
         version = 3,
+        WIDTH   = 512,
+        HEIGHT  = 512,
+        CHANNEL = 1,
         params  = {
             'subsampling_conv_repeat' : 2,
             'upsampling_conv_repeat'  : 1,
@@ -40,12 +46,6 @@ loss_args = {
         'smooth' : 0.5,
         'pred_weight' : 0.5,
 }
-## -------------------------------------------------
-## ----- model specification ----
-## -------------------------------------------------
-WIDTH   = 512
-HEIGHT  = 512
-CHANNEL = 1
 
 ## -------------------------------------------------
 ## ----- image augmentation parameters ----

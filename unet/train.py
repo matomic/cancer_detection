@@ -24,7 +24,7 @@ from console import PipelineApp
 from img_augmentation import ImageAugment
 from load_data import ImgStream
 from losses import get_loss
-from models import get_unet
+from models import get_net
 from utils import hist_summary
 
 # DEBUGGING
@@ -68,7 +68,7 @@ def load_unet(cfg, checkpoint_path=None):
 		model = load_model(checkpoint_path, custom_objects=custom_objects, compile=False)
 		print("model loaded from {}".format(checkpoint_path))
 	else:
-		model = get_unet(cfg.net.version, cfg.HEIGHT, cfg.WIDTH, **cfg.net.params)
+		model = get_net(cfg.net)
 		print("model loaded from scratch")
 	model.compile(
 	    optimizer = getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
@@ -168,7 +168,7 @@ class UnetTrainer(PipelineApp):
 			if 'checkpoint_path' in train_dict:
 				checkpoint_path = os.path.join(self.result_dir, train_dict['checkpoint_path'])
 			else:
-				checkpoint_path = self.checkpoint_path('unet', fold, WIDTH=self.unet_cfg.WIDTH, tag=self.unet_cfg.tag)
+				checkpoint_path = self.checkpoint_path('unet', fold, WIDTH=self.unet_cfg.net.WIDTH, tag=self.unet_cfg.tag)
 
 			with K.tf.device('/gpu:0'):
 				K.set_session(sess)
@@ -177,6 +177,7 @@ class UnetTrainer(PipelineApp):
 				else:
 					model = load_unet(self.unet_cfg)
 				model.summary()
+				model.get_config()
 
 			# Save configuration and model to JSON before training
 			train_dict['checkpoint_path'] = os.path.basename(checkpoint_path)
@@ -223,7 +224,7 @@ class UnetTrainer(PipelineApp):
 		if 'checkpoint_path' in train_dict:
 			checkpoint_path = os.path.join(self.result_dir, train_dict['checkpoint_path'])
 		else:
-			checkpoint_path = self.checkpoint_path('unet', fold, WIDTH=self.unet_cfg.WIDTH, tag=self.unet_cfg.tag)
+			checkpoint_path = self.checkpoint_path('unet', fold, WIDTH=self.unet_cfg.net.WIDTH, tag=self.unet_cfg.tag)
 
 		if os.path.isfile(checkpoint_path):
 			model = load_unet(self.unet_cfg, checkpoint_path)

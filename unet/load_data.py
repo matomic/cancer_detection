@@ -98,31 +98,50 @@ class ImgStreamBase(object):
 		'''Normalize a grayscale {image} to ~0 mean ~1 norm'''
 		return np.asarray(image, dtype=float32_t)*cls.normalization + offset # to range [0, 1] - 0.05 (mean)
 
-	def _datagen(self, input_idx, cycle, shuffle, test=False):
+	def _datagen(self, input_idx, cycle, shuffle, test=False, name=None):
 		'''Infinite data generator'''
 		sampling_prop = self.samplingProbability(input_idx)
 		while True:
 			# Sample from input set
-			sample_idx = input_idx[np_rand(input_idx.size) < sampling_prop]
-			sample_size = len(sample_idx)
-			N_batch = sample_size // self.batch_size
+			sample_mask = np_rand(input_idx.size) < sampling_prop
+			sample_idx  = input_idx[sample_mask]
+			#sample_size = len(sample_idx)
+			#sample_prob = sampling_prop[sample_mask]
+			#print('\n'.join([
+			#    ">>>>>>>>>>>>>",
+			#    "Generator {}".format(name),
+			#    "labels {:d}/{:d}".format(int(sample_prob[sample_prob==1].sum()), sample_size),
+			#    "{} batches of size {} -> {}".format(int(np.ceil(sample_size / self.batch_size)),
+			#        self.batch_size,
+			#        sample_size)
+			#    ]))
 			if shuffle:
 				np_shuffle(sample_idx)
-			# NOTE: this can be split up per GPU
-			for b in range(N_batch):
-				batch_slice = slice(b*self.batch_size, (b+1)*self.batch_size)
+			batch = 0
+			while True:
+				batch_slice = slice(batch*self.batch_size, (batch+1)*self.batch_size)
 				batch_idx = sample_idx[batch_slice]
-				if cycle and len(batch_idx) < self.batch_size:
+				batch += 1
+				if not batch_idx.size:
+					break
+				if len(batch_idx) < self.batch_size:
+			#		print("{} remainder skipped".format(len(batch_idx)))
 					continue # do not yield remainder batch
 				yield self._load_data(batch_idx, test=test)
+
 			if not cycle:
 				break
+#			if cycle is not True:
+#				cycle = abs(cycle) - 1
+#				print ("cycle: {}".format(cycle)) # mainly for testing.
+#			else:
+#				print ("new cycle")
 
 	def CV_fold_gen(self, fold, folds, cycle=True, shuffleTrain=True, augmentTrain=None):
 		'''Return training and valdation dataset for {fold} of {folds}'''
 		train_idx, valid_idx = self.partitionTrainValidation(fold, folds)
-		train_gen = self._datagen(train_idx, cycle=cycle, shuffle=shuffleTrain)
-		valid_gen = self._datagen(valid_idx, cycle=cycle, shuffle=False)
+		train_gen = self._datagen(train_idx, cycle=cycle, shuffle=shuffleTrain, name='train')
+		valid_gen = self._datagen(valid_idx, cycle=cycle, shuffle=False, name='validation')
 		train_size = int(np_rint(np.sum(self.samplingProbability(train_idx))))
 		valid_size = int(np_rint(np.sum(self.samplingProbability(valid_idx))))
 		if augmentTrain:
