@@ -22,8 +22,8 @@ from keras.models import load_model
 # in-house
 from console import PipelineApp
 from img_augmentation import ImageAugment
-from load_data import ImgStream, TrainValidDataset
-from loss import get_loss
+from load_data import ImgStream
+from losses import get_loss
 from models import get_unet
 from utils import hist_summary
 
@@ -233,24 +233,98 @@ class UnetTrainer(PipelineApp):
 
 		#a_func = functools.partial(ImageAugment(**config.aug).flow_gen, mode='fullXY')
 		tds = self.full_train_data.CV_fold_gen(fold=0, folds=10, cycle=False, shuffleTrain=False)
+		#tds = self.full_train_data.all_gen(cycle=False, shuffle=False)
+
+		from keras.losses import binary_crossentropy
 
 		x_imag_tf = K.tf.placeholder(shape=(None, 512, 512, 1), dtype=K.tf.float32)
 		y_true_tf = K.tf.placeholder(shape=(None, 512, 512, 1), dtype=K.tf.float32)
 		y_pred_tf = model(x_imag_tf)
-		loss_1 = get_loss('weighted_dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5)
-		loss_2 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5)
-		loss_3 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5, p_ave=0)
-		loss_4 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5, p_ave=1)
+		dice_kwargs = {'per_sample': True, 'smooth': 5e-1 }
+		dc_kwargs = { 'pred_weight' : 0.5, **dice_kwargs}
+		loss_1 = get_loss('weighted_dice_coef_loss', dc_kwargs)(y_true_tf, y_pred_tf)
+		loss_2 = get_loss('dice_coef_loss', {'pred_mul' : 1.0, **dice_kwargs})(y_true_tf, y_pred_tf)
+		#loss_3 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5, p_ave=0)
+		#loss_4 = get_loss('dice_coef_loss')(y_true_tf, y_pred_tf, smooth=1e-5, p_ave=1)
+		xe_kwargs = { 'pos_weight' : 1.0, 'axis' : (1,2,3) }
+		loss_3 = get_loss('weighted_binary_crossentropy')(y_true_tf, y_pred_tf, **xe_kwargs)
+		loss_4 = K.mean(binary_crossentropy(y_true_tf, y_pred_tf), axis=(1,2))
+		loss_5 = get_loss('combination_loss')(y_true_tf, y_pred_tf, xe_kwargs=xe_kwargs, dc_kwargs=dc_kwargs)
 
-		out = []
+		out_dict = {
+				'tp' : [],
+				'tn' : [],
+				'fp' : [],
+				'fn' : [],
+				}
+
+		count = 0
 		for n, (x, y) in enumerate(tds.validation):
-			out.append(
-					sess.run([loss_1, loss_2, loss_3, loss_4],
-						{x_imag_tf: x, y_true_tf: y, K.learning_phase(): False})
-					)
-			print('{:d}: {}'.format(n, out[-1]))
+			l1_b, l2_b, l3_b, l4_b, l5_b, y_pred = sess.run([loss_1, loss_2, loss_3, loss_4, loss_5, y_pred_tf],
+			    feed_dict = {x_imag_tf: x, y_true_tf: y, K.learning_phase(): False})
+			for y_t, y_p, l1, l2, l3, l4, l5 in zip(y, y_pred, l1_b, l2_b, l3_b, l4_b, l5_b):
+				is_true = np.any(y_t > 0.5)
+				pd_true = np.any(y_p > 0.5)
+				out = [l1, l2, l3, l4, l5]
+				if pd_true:
+					if np.any(y_p * y_t > 0.5):
+						out_dict['tp'].append(out)
+					else:
+						out_dict['fp'].append(out)
+				elif is_true:
+					out_dict['fn'].append(out)
+				else:
+					out_dict['tn'].append(out)
 
-		set_trace()
+				count += 1
+				print(("{:3d}, batch {:3d}: "
+				    "dice_coeff_loss': {:g}; "
+				    "dice_coeff_loss: {:g}; "
+				    "crossentropy: {:g}({:g}).")
+				    .format(count, n, l1, l2, l3, l4))
+#			if n == 10:
+#				break
+		out_dict = { k : np.asarray(v) for k, v in out_dict.items() }
+
+		plot_kwargs = {
+				'tp' : { 'marker' : '*', 'label' : 'T+ ({:2d})' },
+				'tn' : { 'marker' : 'o', 'label' : 'T- ({:2d})' },
+				'fp' : { 'marker' : '+', 'label' : 'F+ ({:2d})' },
+				'fn' : { 'marker' : 'x', 'label' : 'F- ({:2d})' },
+				}
+
+		try:
+			from matplotlib import pyplot as plt
+			plt.ion()
+			plt.figure(1, figsize=(9,6))
+			plt.clf()
+			ix, iy = 0, 2
+			for g in ['tp', 'tn', 'fp', 'fn']:
+				x = out_dict[g][:,ix]
+				y = out_dict[g][:,iy]
+				m = plot_kwargs[g]['marker']
+				plt.plot(x, y, m, label=plot_kwargs[g]['label'].format(x.size))
+			plt.legend()
+			plt.xlabel('dice-coeff')
+			plt.ylabel('xentropy')
+			plt.title(r'$\epsilon={}, \lambda={}, k={}$'.format(dc_kwargs['smooth'], dc_kwargs['pred_weight'], xe_kwargs['pos_weight']))
+
+			plt.figure(2, figsize=(9,6))
+			plt.clf()
+			for g in ['tp', 'tn', 'fp', 'fn']:
+				x = out_dict[g][:,ix]
+				y = x + (5 * out_dict[g][:,iy])**(1/2)
+				m = plot_kwargs[g]['marker']
+				plt.plot(x, y, m, label=plot_kwargs[g]['label'].format(x.size))
+			plt.legend()
+			plt.xlabel('dice-coeff')
+			plt.ylabel('combination')
+			plt.title(r'$\epsilon={}, \lambda={}, k={}$'.format(dc_kwargs['smooth'], dc_kwargs['pred_weight'], xe_kwargs['pos_weight']))
+		except:
+			set_trace()
+			raise
+		else:
+			set_trace()
 
 if __name__=='__main__':
 	sys.exit(UnetTrainer().main() or 0)

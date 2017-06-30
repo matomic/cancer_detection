@@ -1,6 +1,5 @@
 '''Configuration file'''
-
-from console import NetSpecs
+from config import NetSpecs
 
 tag = 2
 #not working better

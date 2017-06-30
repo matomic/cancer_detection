@@ -29,13 +29,17 @@ fitter = {
 }
 
 #loss function paramters
-loss_func = 'dice_coef_loss_gen'
+#loss_func = 'dice_coef_loss_gen'
+#loss_args = {
+#        'smooth'   : 5,
+#        'pred_mul' : 0.6,
+#        'p_ave'    : 0.8
+#}
+loss_func = 'weighted_dice_coef_loss'
 loss_args = {
-        'smooth'   : 5,
-        'pred_mul' : 0.6,
-        'p_ave'    : 0.8
+        'smooth' : 0.5,
+        'pred_weight' : 0.5,
 }
-
 ## -------------------------------------------------
 ## ----- model specification ----
 ## -------------------------------------------------
