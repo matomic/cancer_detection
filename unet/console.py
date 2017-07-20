@@ -125,18 +125,11 @@ class PipelineApp(object):
 		parser.add_argument('--hdf5', action='store_true', default=None,
 		        help='Use HDF5 pipeline (preprocessed data are stored in HDF5 file, not complete).')
 
-		group = parser.add_mutually_exclusive_group()
-		group.add_argument('--session', action='store', default=None,
-		        help='session name')
-
-		group.add_argument('--result-dir', action='store',
+		parser.add_argument('--result-dir', action='store',
 		        help='Overwrite default dirs.res_dir where results are stored')
 
-		#parser.add_argument('tags', type=str, action='append',
-		#        help='config tags')
-
-		#parser.add_argument('--pretend', '-n', action='store_true',
-		#        help='Do not write result to disk')
+		parser.add_argument('session', action='store', default=None,
+		        help='session name')
 
 		return parser
 
@@ -156,22 +149,22 @@ class PipelineApp(object):
 		if parsedArgs.session:
 			self._reslt_dir = os.path.join(self._reslt_dir, parsedArgs.session)
 
-		# Load value for self.unet_cfg and self.n3d_cfg. First try loading from
-		# JSON file of session directory; then load from config_*.py file
-		# specified by CLI argument.
-		self.session_json = self.load_session()
-		self.unet_cfg = self.session_json.setdefault('unet', {}).get('config')
-		self.n3d_cfg  = self.session_json.setdefault('n3d',  {}).get('config')
-		if self.unet_cfg:
-			self.unet_cfg = UnetConfig.fromDict(self.unet_cfg)
-		elif parsedArgs.config_unet is not None:
-			self.unet_cfg = UnetConfig.fromConfigPy(parsedArgs.config_unet)
-			self.session_json['unet']['config'] = self.unet_cfg.toDict()
-		if self.n3d_cfg:
-			self.n3d_cfg = N3DConfig.fromDict(self.n3d_cfg)
-		elif parsedArgs.config_n3d is not None:
-			self.n3d_cfg = N3DConfig.fromConfigPy(parsedArgs.config_n3d)
-			self.session_json['n3d']['config'] = self.n3d_cfg.toDict()
+		# Load network configurations
+		self.session_json = self.load_session() or {}
+		self.unet_cfg = self._loadNetConfiguration('unet', UnetConfig, source=self.parsedArgs.config_unet)
+		self.n3d_cfg  = self._loadNetConfiguration('n3d',  N3DConfig,  source=self.parsedArgs.config_n3d)
+
+	def _loadNetConfiguration(self, net_name, net_cls, source=None):
+		net_cfg = self.session_json.setdefault(net_name, {}).get('config')
+		if source is not None and (net_cfg is None
+				or input("Session {} already has configuration for {}.  Overwrite with config from {}? (y/N)".format(self.parsedArgs.session, net_name, source)).lower().startswith('y')):
+			net_cfg = net_cls.fromConfigPy(source)
+			self.session_json[net_name]['config'] = net_cfg.toDict()
+			print("{} configuration loaded from {}".format(net_name, source))
+		elif net_cfg:
+			net_cfg = net_cls.fromDict(net_cfg)
+			print("{} configuration loaded from session {}".format(net_name, self.parsedArgs.session))
+		return net_cfg
 
 	@staticmethod
 	def provision_dirs(*dirs):

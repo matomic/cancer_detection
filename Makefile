@@ -23,18 +23,23 @@ $(VENV) : # virtualenv
 img_mask : $(RESULT_DIR)/img_mask
 
 $(RESULT_DIR)/img_mask : unet/img_mask_gen.py | $(VENV)
-	$(VENV)/bin/python $< --config-unet $(CONFIG_UNET) --session $(SESSION) --no-lung-mask
+	$(VENV)/bin/python $< --config-unet $(CONFIG_UNET) --no-lung-mask --lazy $(SESSION)
+
+img_mask_hdf5 : $(RESULT_DIR)/img_mask/luna06.h5
+
+$(RESULT_DIR)/img_mask/luna06.h5 : unet/img_mask_gen.py | $(VENV)
+	$(VENV)/bin/python $< --config-unet $(CONFIG_UNET) --no-lung-mask --lazy --hdf5 $(SESSION)
 
 # Step 2 : train unet
 train_unet : unet/train.py | $(VENV)
-	$(VENV)/bin/python $< --config-unet $(CONFIG_UNET) --session $(SESSION)
+	$(VENV)/bin/python $< --config-unet $(CONFIG_UNET) $(SESSION)
 
 # Step 3 : generate nodule candidates
 nodules : unet/NoduleDetect.py | $(VENV)
-	$(VENV)/bin/python $< --config-unet $(CONFIG_UNET) --config-n3d $(CONFIG_N3D) --session $(SESSION) --no-lung-mask
+	$(VENV)/bin/python $< --config-unet $(CONFIG_UNET) --config-n3d $(CONFIG_N3D) --no-lung-mask $(SESSION)
 
 # Step 4 : train 3D nodule net
 train_n3d : unet/trainNodule.py | $(VENV)
-	$(VENV)/bin/python $< --config-n3d $(CONFIG_N3D) --session $(SESSION)
+	$(VENV)/bin/python $< --config-n3d $(CONFIG_N3D) $(SESSION)
 
 # eof vim: iskeyword+=-
