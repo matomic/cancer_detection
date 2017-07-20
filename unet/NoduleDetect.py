@@ -25,6 +25,7 @@ from console import PipelineApp
 from img_mask_gen import LunaCase, get_lung_mask_npy, get_img_mask_npy, normalize
 from utils import safejsondump
 from train import load_unet, UnetTrainer
+from load_data import ImgStream
 
 # DEBUGGING
 from pprint import pprint
@@ -103,8 +104,30 @@ class NoduleDetectApp(PipelineApp):
         res = normalize(case.image)
         if lung_mask is not None:
             res *= lung_mask
-        res = np.array(res, dtype=npf32_t)*(1.0/255) - 0.05
-        res = np.expand_dims(res, axis=-1)
+        res = ImgStream.normalize_image(res)
+        #res = np.array(res, dtype=npf32_t)*(1.0/255) - 0.05
+
+        input_shape = {x.input.shape for x in models}
+        assert len(input_shape) == 1, 'Not-unique input shape: {}'.format(input_shape)
+        input_shape = input_shape.pop()
+
+        if len(input_shape) == 5:
+            raise NotImplementedError
+        elif len(input_shape) == 4:
+            if input_shape[-1] == 1:
+                res = np.expand_dims(res, axis=-1)
+            elif input_shape[-1] == 3:
+                Nz = res.shape[0]
+                res = np.stack([
+                    res[[0, *range(Nz-1)], ...],
+                    res,
+                    res[[*range(1,Nz), -1],...],
+                    ], axis=-1)
+            else:
+                raise NotImplementedError
+        else:
+            raise NotImplementedError
+
         nodules = models[0].predict(res, batch_size=batch_size) > cut
         for model in models[1:]:
             nodules += model.predict(res, batch_size=batch_size) > cut

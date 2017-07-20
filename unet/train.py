@@ -103,7 +103,17 @@ class UnetTrainer(PipelineApp):
 		# as where we will be saving the result.  To use "standard" training data, make a symbolic link from result_dir back to root dir.
 		img_mask_dir = os.path.join(self.result_dir, 'img_mask')
 		assert os.path.isdir(img_mask_dir), 'image/nodule mask pairs are expected in {}. It does not exist'.format(img_mask_dir)
-		self.full_train_data = ImgStream(img_mask_dir, "train", batch_size=self.fitter['batch_size'], unlabeled_ratio=self.unet_cfg.unlabeled_ratio)
+		assert self.unet_cfg.net.CHANNEL in {1,3}, 'Unsupported CHANNEL: {}'.format(self.unet_cfg.CHANNEL)
+		if self.unet_cfg.net.CHANNEL != 1:
+			use_neighbor = 'as_channel'
+		elif self.unet_cfg.net.DEPTH != 1:
+			use_neighbor = 'as_depth'
+		else:
+			use_neighbor = False
+		self.full_train_data = ImgStream(img_mask_dir, "train",
+		    batch_size      = self.fitter['batch_size'],
+		    use_neighbor    = use_neighbor,
+		    unlabeled_ratio = self.unet_cfg.unlabeled_ratio)
 
 	def _main_impl(self):
 		if self.parsedArgs.debug:
@@ -231,6 +241,8 @@ class UnetTrainer(PipelineApp):
 		else:
 			model = load_unet(self.unet_cfg)
 		model.summary()
+
+		set_trace()
 
 		#a_func = functools.partial(ImageAugment(**config.aug).flow_gen, mode='fullXY')
 		tds = self.full_train_data.CV_fold_gen(fold=0, folds=10, cycle=False, shuffleTrain=False)

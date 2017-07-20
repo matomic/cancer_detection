@@ -171,15 +171,19 @@ class ImgStream(ImgStreamBase):
 	0.66...
 	'''
 
-	def __init__(self, imgmask_dir, dataset, batch_size, unlabeled_ratio = 1.0):
+	def __init__(self, imgmask_dir, dataset, batch_size, use_neighbor='', unlabeled_ratio = 1.0):
+		'''
+		:param use_neighbor: 'as_depth'|'as_channel'|''
+		'''
 		if dataset == 'train':
 			image_label_list = get_file_list(imgmask_dir, 'train')
-
-			images = []
-			labels = []
-			findex = []
+			images  = [] # paths to image
+			indices = [] # slice index
+			labels  = [] # slice has label
+			findex  = [] # fold index
 			for path, label, subset in image_label_list:
 				images.append(path)
+				indices.append(int(os.path.splitext(path)[0].split('_')[-1])) # assumes image path ends with _###.{ext}, where ### is the slice number
 				labels.append(label)
 				findex.append(subset)
 		elif dataset == 'test':
@@ -188,6 +192,14 @@ class ImgStream(ImgStreamBase):
 			raise NotImplementedError(dataset)
 
 		super(ImgStream, self).__init__(images, labels, findex, batch_size=batch_size, unlabeled_ratio=unlabeled_ratio)
+		if use_neighbor == 'as_depth':
+			self.use_neighbor = 2 # treat neighbor slices as depth
+		elif use_neighbor == 'as_channel':
+			self.use_neighbor = 1 # treat neighbor slices as channel
+		else:
+			self.use_neighbor = 0 # do not use neighbor slices
+		self.indices = indices
+
 
 	@staticmethod
 	def get_mask(filename):
@@ -196,22 +208,41 @@ class ImgStream(ImgStreamBase):
 		return a+'mask_'+c
 
 	def _load_batch_image(self, batch_idx):
-		return [np.load(self.images[i]) for i in batch_idx]
+		'''Return array of shape [(batch_size), *(SPACE_DIMS), CHANNEL]'''
+		if self.use_neighbor:
+			batch = []
+			for i in batch_idx:
+				img_path = self.images[i]
+				ct_index = self.indices[i]
+				prv_path = img_path.replace('_{:3d}.'.format(ct_index), '_{:3d}.'.format(max(0, ct_index-1)))
+				nxt_path = img_path.replace('_{:3d}.'.format(ct_index), '_{:3d}.'.format(ct_index+1))
+				mid_npy = np.load(img_path)
+				# If slice of prev/next index exist, use them, otherwise repeat mid slice.
+				prv_npy = np.load(prv_path) if os.path.isfile(prv_path) else mid_npy
+				nxt_npy = np.load(nxt_path) if os.path.isfile(nxt_path) else mid_npy
+				batch.append(np.moveaxis([prv_npy, mid_npy, nxt_npy], 0, -1)) # [WIDTH, HEIGHT, 3]
+			if self.use_neighbor == 1:
+				return batch
+			else:
+				raise NotImplementedError
+		else:
+			# [batch_size, WIDTH, HEIGHT, 1]
+			return np.expand_dims([np.load(self.images[i]) for i in batch_idx], axis=-1)
 
 	def _load_batch_label(self, batch_idx, batch):
-		return [ np.load(self.get_mask(self.images[i]))   # mask
+		return np.expand_dims(
+				[ np.load(self.get_mask(self.images[i]))  # mask
 				if bool(self.labels[i]) else              # or
 				np.zeros(batch.shape[1:3],dtype=np.uint8) # zeros
-				for i in batch_idx]
+				for i in batch_idx],
+				axis=-1)
 
 	def _load_data(self, batch_idx, test=False):
 		batch = self._load_batch_image(batch_idx)
 		batch = self.normalize_image(batch)
-		batch = np.expand_dims(batch, axis=-1)
 		if test:
 			return batch
 		labels = self._load_batch_label(batch_idx, batch)
-		labels = np.reshape(np.asarray(labels, dtype=float32_t), batch.shape)
 
 		# sanity check
 		mask_label = [np.any(m) for m in labels]

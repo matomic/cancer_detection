@@ -12,7 +12,7 @@ from keras.layers import Input
 #from keras.layers.advanced_activations import PReLU, LeakyReLU
 from keras.layers.convolutional import Conv3D as Convolution3D, Conv2D as Convolution2D, UpSampling2D, UpSampling3D
 from keras.layers.core import Dense, Dropout, Flatten, Reshape
-from keras.layers.merge import concatenate, add, average
+from keras.layers.merge import concatenate, add#, average
 from keras.layers.normalization import BatchNormalization as BN
 from keras.layers.pooling import MaxPooling2D, MaxPooling3D, AveragePooling3D
 
@@ -24,7 +24,7 @@ def get_net(netspec):
 	if netspec.name.upper() == 'SAMPLE3D':
 		return get_3Dnet(netspec.version, netspec.WIDTH, netspec.HEIGHT, netspec.CHANNEL)
 	elif netspec.name.upper() == 'UNET':
-		return get_unet(netspec.version, netspec.WIDTH, netspec.HEIGHT, **netspec.params)
+		return get_unet(netspec.version, netspec.WIDTH, netspec.HEIGHT, netspec.CHANNEL, **netspec.params)
 	else:
 		raise ValueError("Unknown network {}: {}".format(netspec.name, netspec))
 
@@ -86,10 +86,11 @@ def get_3Dnet(version, W, H, CH):
 
 def unet_conv(x_in, nf, axis, rep=1, res_like=False):
 	'''Generate a 2D convolution layer(s) for {x_in} with {nf} filters, repeating {rep} times'''
+	if axis is None:
+		axis = -1 if K.image_data_format() == 'channels_last' else 1
 	for _ in range(rep):
 		conv = Convolution2D(nf, (3, 3), padding='same', activation='relu')(x_in)
-		if res_like:
-			# resNet-like
+		if res_like: # resNet-like NOTE: experimental, does not really work...
 			x_in_shape = x_in.shape
 			conv_shape = conv.shape
 			mul = conv_shape[-1].value / x_in_shape[-1].value
@@ -122,14 +123,20 @@ def unet_conv(x_in, nf, axis, rep=1, res_like=False):
 	#		#x_out = LeakyReLU(0.1)(x_out)
 	#		return x_out
 
-def get_unet(version, W, H, **cfg_dict):
+def get_unet(version, W, H, CH=1, **cfg_dict):
 	'''Generate {version} UNET model for image of size {W}x{H}'''
-	if K.image_dim_ordering() == 'tf':
-		c = 3
-		inputs = Input((W, H, 1))
-	else:
+	if K.image_data_format() == 'channels_last':
+		inputs = Input((W, H, CH))
+		c = -1
+	elif K.image_data_format() == 'channels_first':
+		inputs = Input((CH, W, H))
 		c = 1
-		inputs = Input((1, W, H))
+	else:
+		raise ValueError('Unknown K.image_data_format() = {}'.format(K.image_data_format()))
+
+	sub_rep = cfg_dict['subsampling_conv_repeat'] # number fo time conv2d/BN layers are repeated on the way down
+	sup_rep = cfg_dict['upsampling_conv_repeat']  # number of time conv2d/BN layers are repeated on the way up
+	kwargs = { 'axis' : c, 'rep' : sub_rep, 'res_like' : cfg_dict.get('resnet_like', False) }
 
 	def unet_conv_down(x_in, nf):
 		'''Generate downsampling convolution layer'''
@@ -181,10 +188,7 @@ def get_unet(version, W, H, **cfg_dict):
 		net = unet_conv(net, n0, axis=c, rep=1)
 		labels = Convolution2D(1, (3, 3), activation='sigmoid', padding='same', name='labels')(net)
 	elif version == 3:
-		sub_rep = cfg_dict['subsampling_conv_repeat'] # number fo time conv2d/BN layers are repeated on the way down
-		sup_rep = cfg_dict['upsampling_conv_repeat']  # number of time conv2d/BN layers are repeated on the way up
-		kwargs = { 'axis' : c, 'rep' : sub_rep, 'res_like' : cfg_dict.get('resnet_like', False) }
-		n0 = 8                                     # (?, 512, 512, 1)
+		n0 = 8
 		cov1 = unet_conv(inputs, n0,    **kwargs)  # -> (?, 512, 512, 8)
 		net  = MaxPooling2D(pool_size=(2,2))(cov1) # -> (?, 256, 256, 8)
 		cov2 = unet_conv(net,    n0*2,  **kwargs)  # -> (?, 256, 256, 16)

@@ -13,18 +13,23 @@ net = NetSpecs(
         version = 3,
         WIDTH   = 512,
         HEIGHT  = 512,
-        CHANNEL = 1,
+        CHANNEL = 3,
         params  = {
             'subsampling_conv_repeat' : 2,
             'upsampling_conv_repeat'  : 1,
             })
 
 keep_prob=0.3
+
+## -------------------------------------------------
+## Data stream
+## -------------------------------------------------
+unlabeled_ratio = 0.5
+
 ## -------------------------------------------------
 ## -----  fitter -------
 ## -------------------------------------------------
-#sample
-unlabeled_ratio = 0.5
+## sample
 fitter = {
     'batch_size' : 8,
     'num_epochs' : 40,
@@ -34,8 +39,8 @@ fitter = {
     'opt_arg'    : { 'lr' : 1e-3 }
 }
 
-#loss function paramters
-#loss_func = 'dice_coef_loss_gen'
+## loss function paramters
+#loss_func = 'dice_coef_loss'
 #loss_args = {
 #        'smooth'   : 5,
 #        'pred_mul' : 0.6,
@@ -43,8 +48,9 @@ fitter = {
 #}
 loss_func = 'weighted_dice_coef_loss'
 loss_args = {
-        'smooth' : 0.5,
+        'smooth' : 5,
         'pred_weight' : 0.5,
+        'all_weight' : 0.8,
 }
 
 ## -------------------------------------------------
