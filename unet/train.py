@@ -104,9 +104,9 @@ class UnetTrainer(PipelineApp):
 		img_mask_dir = os.path.join(self.result_dir, 'img_mask')
 		assert os.path.isdir(img_mask_dir), 'image/nodule mask pairs are expected in {}. It does not exist'.format(img_mask_dir)
 		assert self.unet_cfg.net.CHANNEL in {1,3}, 'Unsupported CHANNEL: {}'.format(self.unet_cfg.CHANNEL)
-		if self.unet_cfg.net.CHANNEL != 1:
+		if self.unet_cfg.net.CHANNEL and self.unet_cfg.net.CHANNEL != 1:
 			use_neighbor = 'as_channel'
-		elif self.unet_cfg.net.DEPTH != 1:
+		elif self.unet_cfg.net.DEPTH and self.unet_cfg.net.DEPTH != 1:
 			use_neighbor = 'as_depth'
 		else:
 			use_neighbor = False
