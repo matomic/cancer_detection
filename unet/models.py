@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
 '''  (^._.^)ﾉ☆( _ _).oO  '''
 from __future__ import print_function, division
-import functools
+# stdlib
+import sys
+
+# third-party
+import numpy as np
 
 from keras import backend as K
 
@@ -122,6 +126,36 @@ def unet_conv(x_in, nf, axis, rep=1, res_like=False):
 	#		x_out = BN(axis=axis)(x_out)
 	#		#x_out = LeakyReLU(0.1)(x_out)
 	#		return x_out
+
+def transfer_weight(fr_model, to_model):
+	'''Transfer weights from {fr_model} and {to_model} layer-by-layer
+	The weight of each layer must be of the same shape.
+	Or,
+	If they has exact one axis whose dimension is 1 and 3, respectively, transfer the weight from old model to the 2nd-axis of the to_model
+	'''
+	for fr_layer, to_layer in zip(fr_model.layers, to_model.layers):
+		fr_weights = fr_layer.get_weights()
+		to_weights = to_layer.get_weights()
+		upd_weights = []
+		for fr_wght, to_wght in zip(fr_weights, to_weights):
+			if fr_wght.shape == to_wght.shape:
+				upd_wght = fr_wght # old and new weight are the same shape
+			else:
+				axis = { n for n,(old,new) in enumerate(zip(fr_wght.shape, to_wght.shape)) if old!=new }
+				if len(axis) == 1: # old and new weight are the same shape except for one dimension
+					axis = axis.pop() # axis of old and new weight disagree
+					if fr_wght.shape[axis] == 1 and to_wght.shape[axis] == 3:
+						upd_wght = np.zeros_like(to_wght)
+						upd_wght[[slice(None) if n != 2 else slice(1,2) for n in range(fr_wght.ndim)]] = fr_wght
+					else:
+						print("WARN: unable to transfer weight from {}->{}".format(fr_wght.shape, to_wght.shape), file=sys.stderr)
+						break
+				else:
+					print("WARN: unable to transfer weight from {}->{}".format(fr_wght.shape, to_wght.shape), file=sys.stderr)
+					break
+			upd_weights.append(upd_wght)
+		else:
+			to_layer.set_weights(upd_weights)
 
 def get_unet(version, W, H, CH=1, **cfg_dict):
 	'''Generate {version} UNET model for image of size {W}x{H}'''

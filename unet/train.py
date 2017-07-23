@@ -10,6 +10,7 @@ import argparse
 
 # 3rd-party
 import numpy as np
+import simplejson as json
 #import pandas as pd
 #import tensorflow as tf
 
@@ -20,11 +21,12 @@ from keras.models import load_model
 #from keras.objectives import categorical_crossentropy
 
 # in-house
+from config import UnetConfig
 from console import PipelineApp
 from img_augmentation import ImageAugment
 from load_data import ImgStream
 from losses import get_loss
-from models import get_net
+from models import get_net, transfer_weight
 from utils import hist_summary
 
 # DEBUGGING
@@ -76,6 +78,14 @@ def load_unet(cfg, checkpoint_path=None):
 	    )
 	return model
 
+def load_model_from_session(session_json_path, fold='0'):
+	'''Load unet model from session at {session_json_path}'''
+	session_json = json.load(open(session_json_path, 'r'))
+	session_cfg  = UnetConfig.fromDict(session_json['unet']['config'])
+	checkpt_path = os.path.join(os.path.dirname(session_json_path),
+			session_json['unet']['models'][str(fold)]['checkpoint_path'])
+	return load_unet(session_cfg, checkpt_path)
+
 
 class UnetTrainer(PipelineApp):
 	'''Train Unet model with simple 2D slices'''
@@ -90,6 +100,9 @@ class UnetTrainer(PipelineApp):
 		    description='Train Unet',
 		    parents=[parser], conflict_handler='resolve')
 
+		parser.add_argument('--init-weight-from', action='store',
+				help='Initialize weight by transfering weights from another session')
+
 		parser.add_argument('--debug', action='store_true',
 		    help='enter debug model')
 
@@ -97,6 +110,15 @@ class UnetTrainer(PipelineApp):
 
 	def argparse_postparse(self, parsedArgs=None):
 		super(UnetTrainer, self).argparse_postparse(parsedArgs)
+		init_weight_from = parsedArgs.init_weight_from
+		if init_weight_from:
+			if not os.path.isdir(init_weight_from):
+				init_weight_from = os.path.join(self.dirs.res_dir, init_weight_from)
+			if os.path.isdir(init_weight_from):
+				parsedArgs.init_weight_from = init_weight_from
+			else:
+				parsedArgs.init_weight_from = None
+				print("WARN: cannot determine session of --init-weights-from {}.".format(parsedArgs.init_weight_from))
 		self.fitter = self.unet_cfg.fitter
 		# Normally, img_mask_gen.py generates image/nodule mask pairs in self.cfg.root/img_mask, so that training data are reusable.  However,
 		# sometimes we might want to experiment with different preprocessing approaches.  So here we expect training data to come from the same place
@@ -104,9 +126,10 @@ class UnetTrainer(PipelineApp):
 		img_mask_dir = os.path.join(self.result_dir, 'img_mask')
 		assert os.path.isdir(img_mask_dir), 'image/nodule mask pairs are expected in {}. It does not exist'.format(img_mask_dir)
 		assert self.unet_cfg.net.CHANNEL in {1,3}, 'Unsupported CHANNEL: {}'.format(self.unet_cfg.CHANNEL)
-		if self.unet_cfg.net.CHANNEL and self.unet_cfg.net.CHANNEL != 1:
+		assert self.unet_cfg.net.DEPTH in {None, 1, 3}, 'Unsupported DEPTH: {}'.format(self.unet_cfg.DEPTH)
+		if self.unet_cfg.net.CHANNEL != 1:
 			use_neighbor = 'as_channel'
-		elif self.unet_cfg.net.DEPTH and self.unet_cfg.net.DEPTH != 1:
+		elif self.unet_cfg.net.DEPTH != 1:
 			use_neighbor = 'as_depth'
 		else:
 			use_neighbor = False
@@ -188,6 +211,11 @@ class UnetTrainer(PipelineApp):
 					model = load_unet(self.unet_cfg)
 				model.summary()
 				model.get_config()
+
+			## Transfer weights from flat unet
+			if self.parsedArgs.init_weight_from:
+				old_model = load_model_from_session(os.path.join(self.parsedArgs.init_weight_from, 'session.json'), fold=fold)
+				transfer_weight(old_model, model)
 
 			# Save configuration and model to JSON before training
 			train_dict['checkpoint_path'] = os.path.basename(checkpoint_path)

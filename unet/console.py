@@ -157,7 +157,7 @@ class PipelineApp(object):
 	def _loadNetConfiguration(self, net_name, net_cls, source=None):
 		net_cfg = self.session_json.setdefault(net_name, {}).get('config')
 		if source is not None and (net_cfg is None
-				or input("Session {} already has configuration for {}.  Overwrite with config from {}? (y/N)".format(self.parsedArgs.session, net_name, source)).lower().startswith('y')):
+				or input("Session {} already has configuration for {}.  Overwrite with config from {} (y/N)? ".format(self.parsedArgs.session, net_name, source)).lower().startswith('y')):
 			net_cfg = net_cls.fromConfigPy(source)
 			self.session_json[net_name]['config'] = net_cfg.toDict()
 			print("{} configuration loaded from {}".format(net_name, source))
