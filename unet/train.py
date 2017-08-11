@@ -31,7 +31,10 @@ from utils import hist_summary
 
 # DEBUGGING
 from pprint import pprint
-from ipdb import set_trace
+try:
+	from ipdb import set_trace
+except Exception:
+	pass
 
 
 def fit_callbacks(chkpt_path):

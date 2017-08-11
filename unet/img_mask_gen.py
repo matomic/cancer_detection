@@ -257,10 +257,6 @@ def get_img_mask_npy(case, lung_mask, z, img_path, mask_path, save_npy=True, laz
 	return img, mask
 
 
-#LunaCase = collections.namedtuple('_X_NTP', (
-#    'subset', 'suid', 'hashid', 'image', 'origin', 'spacing', 'h', 'nodules',# 'lung_mask'
-#    ))
-
 class LunaCase(object):
 	'''Represents a LUNA case, keeps tracks of subset, suid, image file and nodules list of patient'''
 	@staticmethod
@@ -277,7 +273,7 @@ class LunaCase(object):
 			# <dir>/<suid>.mhd, <suid>=<orgid>.<hash>
 			# <dir>/<suid>.mhd, <suid>=<orgid>.<hash>
 			suid = os.path.basename(img_file)[:-4]
-			sid_node = df_node[df_node["seriesuid"]==suid] #get all nodules associate with file
+			sid_node = df_node[df_node["seriesuid"]==suid] # get all nodules associate with file
 			yield cls(subset, suid, img_file, sid_node)
 
 	def __init__(self, subset, suid, img_file, sid_node):

@@ -16,32 +16,32 @@ from keras import optimizers as opt
 from keras.models import load_model
 
 from img_augmentation2 import ImageDataGenerator
-from models import get_3Dnet
+from models import get_net
 from console import PipelineApp
 from NoduleDetect import NoduleCandidate
 from utils import safejsondump, config_json
 
 # DEBUG
 from pprint import pprint
-from ipdb import set_trace
+try:
+    from ipdb import set_trace
+except:
+    pass
 
 
 npf32_t = np.float32 # pylint: disable=no-member
 
-def n3dnet_from_checkpoint(chkpt_path):
-    '''Load nodule 3D network from checkpoint'''
-    model = load_model(chkpt_path)
-    print("model loaded from checkpoint {}.".format(chkpt_path))
-    return model
-
-def n3dnet_from_scratch(cfg):
-    '''build the neural network that calculates nodule candidate probability'''
-    model = get_3Dnet(cfg.net.name, cfg.net.version, cfg.WIDTH, cfg.HEIGHT, cfg.CHANNEL)
-    model.compile(
-            optimizer = getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
-            loss = 'binary_crossentropy'
-            )
-    print("model loaded from scratch")
+def load_n3dnet(cfg, checkpoint_path=None):
+    if checkpoint_path:
+        model = load_model(checkpoint_path)
+        print("model loaded from checkpoint {}.".format(checkpoint_path))
+    else:
+        model = get_net(cfg.net)
+        model.compile(
+                optimizer = getattr(opt, cfg.fitter['opt'])(**cfg.fitter['opt_arg']),
+                loss = 'binary_crossentropy'
+                )
+        print("model loaded from scratch")
     return model
 
 def train(Xtrain, Ytrain, Xval, Yval, cfg, checkpoint_path):
@@ -101,6 +101,7 @@ class NoduleNetTrainer(PipelineApp):
         return data
 
     checkpoint_path_fmrstr = '{net}_{WIDTH}_{tag}_fold{fold}.hdf5'
+
     def _main_impl(self):
         cases = self.getInputData()
         Ncase = np.sum(len(candidates) for candidates in cases)

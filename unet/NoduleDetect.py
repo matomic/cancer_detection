@@ -29,7 +29,10 @@ from load_data import ImgStream
 
 # DEBUGGING
 from pprint import pprint
-from ipdb import set_trace
+try:
+    from ipdb import set_trace
+except:
+    pass
 
 npf32_t = np.float32 # pylint: disable=no-member
 
@@ -107,7 +110,7 @@ class NoduleDetectApp(PipelineApp):
         res = ImgStream.normalize_image(res)
         #res = np.array(res, dtype=npf32_t)*(1.0/255) - 0.05
 
-        input_shape = {x.input.shape for x in models}
+        input_shape = {tuple(d.value for d in x.input.shape) for x in models}
         assert len(input_shape) == 1, 'Not-unique input shape: {}'.format(input_shape)
         input_shape = input_shape.pop()
 
@@ -226,11 +229,11 @@ class NoduleDetectApp(PipelineApp):
 
             # save missed detection
             for xyzd in case.nodules:
+                assert np.all(np.round(xyzd[:3]) == xyzd[:3]), 'bad xyz: {}'.format(xyzd[:3])
                 if xyzd in detected_set:
                     #self.statistics['detected_nodule_list'].append(case.nodules)
                     self.statistics['nodules_detected'] += 1
                 else:
-                    assert np.all(np.round(xyzd[:3]) == xyzd[:3]), 'bad xyz: {}'.format(xyzd[:3])
                     z_int = int(xyzd[2])
                     f = os.path.join(self.missed_dir, '{}-{}.png'.format(case.hashid, z_int))
                     img_path  = self.ct_slice_path(case.subset, case.hashid, z_int)
