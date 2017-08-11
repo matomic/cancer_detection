@@ -145,7 +145,7 @@ def transfer_weight(fr_model, to_model):
 				if len(axis) == 1: # old and new weight are the same shape except for one dimension
 					axis = axis.pop() # axis of old and new weight disagree
 					if fr_wght.shape[axis] == 1 and to_wght.shape[axis] == 3:
-						upd_wght = np.zeros_like(to_wght)
+						upd_wght = to_wght.copy()
 						upd_wght[[slice(None) if n != 2 else slice(1,2) for n in range(fr_wght.ndim)]] = fr_wght
 					else:
 						print("WARN: unable to transfer weight from {}->{}".format(fr_wght.shape, to_wght.shape), file=sys.stderr)
@@ -155,7 +155,10 @@ def transfer_weight(fr_model, to_model):
 					break
 			upd_weights.append(upd_wght)
 		else:
-			to_layer.set_weights(upd_weights)
+			if upd_weights:
+				to_layer.set_weights(upd_weights)
+			else:
+				print("WARN: No weight to transfer {:20s}->{:20s}.".format(fr_layer.name, to_layer.name), file=sys.stderr)
 
 def get_unet(version, W, H, CH=1, **cfg_dict):
 	'''Generate {version} UNET model for image of size {W}x{H}'''
